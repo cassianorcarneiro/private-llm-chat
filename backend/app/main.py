@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import mimetypes
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -411,6 +412,10 @@ async def chat(req: ChatRequest):
 
 
 # --- Frontend ---------------------------------------------------------------------
+
+# Python's mimetypes does not know .webmanifest on every platform. Without this,
+# the manifest may be served as text/plain or application/octet-stream.
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 _static = Path(settings.static_dir)
 if _static.is_dir():

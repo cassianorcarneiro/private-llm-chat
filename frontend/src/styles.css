@@ -21,7 +21,8 @@ body { background: var(--bg); color: var(--text); font: 15px/1.6 var(--sans); -w
 button, input, select, textarea { font: inherit; color: inherit; }
 a { color: var(--accent); }
 
-.app { display: flex; height: 100%; overflow: hidden; }
+/* 100dvh tracks the visible viewport when mobile browser bars show or hide. */
+.app { display: flex; height: 100%; height: 100dvh; overflow: hidden; }
 
 /* --- Sidebar --------------------------------------------------------------- */
 .sidebar { width: 272px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--panel); border-right: 1px solid var(--line); }
@@ -164,7 +165,9 @@ a { color: var(--accent); }
   .scrim.show { display: block; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); z-index: 30; }
   .icon-btn.menu { display: inline-block; }
   .thread { padding: 20px 16px 8px; }
-  .composer-wrap { padding: 6px 10px 10px; }
+  /* Keep the composer above the gesture bar when installed (viewport-fit=cover). */
+  .composer-wrap { padding: 6px 10px max(10px, env(safe-area-inset-bottom)); }
+  .sidebar-foot { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
   .model-select { max-width: 150px; }
   .conv-actions { display: flex; }
 }
