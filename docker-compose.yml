@@ -1,0 +1,52 @@
+services:
+  app:
+    build: .
+    container_name: local-ai-chat
+    restart: unless-stopped
+    # Bound to loopback only. Exposed to the tailnet via `tailscale serve`.
+    ports:
+      - "127.0.0.1:${APP_PORT:-8088}:8080"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://chat:${POSTGRES_PASSWORD}@postgres:5432/chat
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      SEARXNG_URL: http://searxng:8080
+    # host-gateway resolves to the docker0 address (172.17.0.1),
+    # which is where the host's Ollama listens.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      searxng:
+        condition: service_started
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: local-ai-chat-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: chat
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: chat
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chat -d chat"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: local-ai-chat-searxng
+    restart: unless-stopped
+    # No published port: only the app container reaches it.
+    environment:
+      SEARXNG_BASE_URL: http://searxng:8080/
+      SEARXNG_SECRET: ${SEARXNG_SECRET}
+    volumes:
+      - ./searxng:/etc/searxng:rw
+
+volumes:
+  pgdata:

@@ -1,0 +1,22 @@
+# Minimal SearXNG config for a private, internal-only instance.
+# Everything not listed here falls back to SearXNG's defaults.
+use_default_settings: true
+
+general:
+  instance_name: "local-ai-chat"
+
+server:
+  # Overridden by the SEARXNG_SECRET environment variable.
+  secret_key: "overridden-by-env"
+  # The limiter protects public instances from bots. This one is only reachable
+  # from the app container, so it is off (and needs no Valkey/Redis).
+  limiter: false
+  public_instance: false
+  image_proxy: false
+
+search:
+  safe_search: 0
+  # The app consumes the JSON API, which is disabled by default.
+  formats:
+    - html
+    - json
