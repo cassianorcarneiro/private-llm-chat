@@ -38,7 +38,16 @@ a { color: var(--accent); }
 .conv-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 .conv-actions { display: none; gap: 2px; }
 .conv-item:hover .conv-actions, .conv-item.active .conv-actions { display: flex; }
-.sidebar-foot { padding: 12px 16px; border-top: 1px solid var(--line); }
+.sidebar-foot { padding: 12px 16px; border-top: 1px solid var(--line); display: grid; gap: 10px; }
+.vram { font-size: 12.5px; display: grid; gap: 4px; }
+.vram-head { display: flex; justify-content: space-between; align-items: center; }
+.vram-title { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: #4a4d53; }
+.dot.on { background: var(--accent); box-shadow: 0 0 6px rgba(212, 163, 90, 0.6); }
+.vram-row { display: flex; align-items: center; gap: 6px; padding-left: 14px; }
+.vram-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; }
+.vram-meta { color: var(--muted); font-size: 12px; }
+.icon-btn:disabled { opacity: 0.35; cursor: default; }
 .scrim { display: none; }
 
 /* --- Buttons ---------------------------------------------------------------- */
@@ -157,6 +166,7 @@ a { color: var(--accent); }
 .chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; }
 .chip { font-size: 11.5px; padding: 1px 8px; border-radius: 20px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); }
 .chip.accent { color: var(--accent); border-color: #4a3c25; }
+.chip.loaded { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); font-weight: 600; }
 .desc { margin: 0; font-size: 13.5px; }
 .danger-text { color: var(--danger); }
 .source-link { font-size: 12px; color: var(--muted); }

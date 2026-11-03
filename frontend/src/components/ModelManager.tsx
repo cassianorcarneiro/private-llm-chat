@@ -1,9 +1,13 @@
 import { useRef, useState } from "react";
 import { api, readSSE } from "../api";
-import type { ModelInfo } from "../types";
+import type { LoadedModel, ModelInfo } from "../types";
+import { untilLabel } from "./VramPanel";
 
 interface Props {
   models: ModelInfo[];
+  loaded: LoadedModel[];
+  streaming: boolean;
+  onUnload: (name?: string) => void;
   onClose: () => void;
   onChanged: () => void;
 }
@@ -20,7 +24,8 @@ function gb(bytes: number) {
   return (bytes / 1e9).toFixed(1) + " GB";
 }
 
-export default function ModelManager({ models, onClose, onChanged }: Props) {
+export default function ModelManager({ models, loaded, streaming, onUnload, onClose, onChanged }: Props) {
+  const resident = new Map(loaded.map((l) => [l.name, l]));
   const [name, setName] = useState("");
   const [pull, setPull] = useState<PullState | null>(null);
   const abort = useRef<AbortController | null>(null);
@@ -95,6 +100,16 @@ export default function ModelManager({ models, onClose, onChanged }: Props) {
               <div className="model-row">
                 <strong>{m.name}</strong>
                 <span className="actions">
+                  {resident.has(m.name) && (
+                    <button
+                      className="link-btn"
+                      onClick={() => onUnload(m.name)}
+                      disabled={streaming}
+                      title={streaming ? "Wait for the answer to finish" : "Free its GPU memory now"}
+                    >
+                      Unload
+                    </button>
+                  )}
                   <button
                     className="link-btn"
                     onClick={() => api.describeModel(m.name).then(onChanged)}
@@ -113,6 +128,11 @@ export default function ModelManager({ models, onClose, onChanged }: Props) {
                 </span>
               </div>
               <div className="chips">
+                {resident.has(m.name) && (
+                  <span className="chip loaded" title={untilLabel(resident.get(m.name)!.expires_at)}>
+                    in VRAM · {gb(resident.get(m.name)!.size_vram)}
+                  </span>
+                )}
                 {m.parameter_size && <span className="chip">{m.parameter_size}</span>}
                 {m.quantization && <span className="chip">{m.quantization}</span>}
                 <span className="chip">{gb(m.size)}</span>

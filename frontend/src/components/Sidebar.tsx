@@ -1,6 +1,10 @@
-import type { ConversationSummary } from "../types";
+import type { ConversationSummary, LoadedModel } from "../types";
+import VramPanel from "./VramPanel";
 
 interface Props {
+  loaded: LoadedModel[];
+  streaming: boolean;
+  onUnload: (name?: string) => void;
   conversations: ConversationSummary[];
   activeId: string | null;
   open: boolean;
@@ -89,6 +93,7 @@ export default function Sidebar(p: Props) {
         </nav>
 
         <div className="sidebar-foot">
+          <VramPanel loaded={p.loaded} busy={p.streaming} onUnload={p.onUnload} />
           <button className="btn ghost block" onClick={p.onOpenModels}>
             Manage models
           </button>

@@ -213,6 +213,41 @@ async def describe_model(name: str):
     return {"name": name, "status": "pending"}
 
 
+def _loaded_dict(m: dict) -> dict:
+    return {
+        "name": m.get("name") or m.get("model"),
+        "size_vram": int(m.get("size_vram") or 0),
+        "expires_at": m.get("expires_at"),
+    }
+
+
+@app.get("/api/models/loaded")
+async def loaded_models():
+    """Models resident in memory, as reported by Ollama's /api/ps."""
+    try:
+        return [_loaded_dict(m) for m in await ollama.ps()]
+    except Exception as exc:
+        raise HTTPException(502, f"Ollama unreachable: {exc}")
+
+
+class UnloadRequest(BaseModel):
+    # Omit to unload every resident model.
+    name: str | None = Field(default=None, max_length=300)
+
+
+@app.post("/api/models/unload")
+async def unload_models(req: UnloadRequest):
+    try:
+        names = [req.name] if req.name else [_loaded_dict(m)["name"] for m in await ollama.ps()]
+        for name in names:
+            await ollama.unload(name)
+        # Unloading is asynchronous inside Ollama: report the state after a short wait.
+        await asyncio.sleep(0.5)
+        return {"unloaded": names, "loaded": [_loaded_dict(m) for m in await ollama.ps()]}
+    except Exception as exc:
+        raise HTTPException(502, str(exc))
+
+
 @app.delete("/api/models/{name:path}", status_code=204)
 async def delete_model(name: str):
     try:

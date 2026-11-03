@@ -38,6 +38,7 @@ With the web toggle off, no byte of the conversation leaves the server.
 
 - **Model picker with descriptions.** Generated automatically when a model appears in Ollama, including models pulled from the CLI.
 - **Model management.** Pull and delete models from the UI, with download progress.
+- **GPU memory control.** See which models are resident in VRAM and unload them on demand, to free the GPU for other workloads.
 - **Web search toggle.** Off by default. Answers cite their sources as `[n]`.
 - **Conversation history.** Resume, rename and delete. Long chats are summarized instead of silently truncated.
 - **Rich rendering.** Markdown, syntax-highlighted code and LaTeX math (KaTeX, bundled locally, no CDN).
@@ -140,7 +141,7 @@ All settings are environment variables in `.env`. See [`.env.example`](.env.exam
 | `OLLAMA_BASE_URL` | Ollama endpoint (default: `http://host.docker.internal:11434`) |
 | `TIMEZONE` | Used for "today" in prompts (default: `America/Sao_Paulo`) |
 | `DEFAULT_NUM_CTX` | Context window sent to Ollama, capped by each model's limit (default: `8192`) |
-| `KEEP_ALIVE` | How long a model stays in VRAM after the last request (default: `15m`) |
+| `KEEP_ALIVE` | How long a model stays in VRAM after the last request (default: `15m`). Ollama does not yield memory to non-Ollama processes, so lower it, or unload from the UI, if other CUDA jobs share the GPU. |
 | `EMBED_MODEL` | Embedding model for passage ranking (default: `nomic-embed-text`) |
 | `SEARCH_AUTHORITY_BOOST` | Ranking bonus for primary sources (default: `0.15`) |
 | `SEARCH_PRIMARY_DOMAINS` | JSON list of hosts treated as primary sources (default: code, package and paper hosts) |
@@ -174,6 +175,8 @@ There is no telemetry. To also hide your IP from search engines, route the SearX
 | `POST` | `/api/models/pull` | Pull a model (SSE progress) |
 | `POST` | `/api/models/{name}/describe` | Regenerate a description |
 | `DELETE` | `/api/models/{name}` | Remove a model from Ollama |
+| `GET` | `/api/models/loaded` | Models resident in memory (Ollama `/api/ps`) |
+| `POST` | `/api/models/unload` | Unload one model (`{"name": ...}`) or all (`{}`) |
 | `GET` | `/api/health` | Ollama and SearXNG reachability |
 
 ---

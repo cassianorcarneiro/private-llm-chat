@@ -1,4 +1,4 @@
-import type { ConversationSummary, ChatMessage, ModelInfo, SSEEvent } from "./types";
+import type { ConversationSummary, ChatMessage, LoadedModel, ModelInfo, SSEEvent } from "./types";
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -32,6 +32,13 @@ export const api = {
     fetch(`/api/conversations/${id}`, { method: "DELETE" }).then(json<void>),
 
   listModels: () => fetch("/api/models").then(json<ModelInfo[]>),
+  loadedModels: () => fetch("/api/models/loaded").then(json<LoadedModel[]>),
+  unloadModels: (name?: string) =>
+    fetch("/api/models/unload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(name ? { name } : {}),
+    }).then(json<{ unloaded: string[]; loaded: LoadedModel[] }>),
   deleteModel: (name: string) => fetch(`/api/models/${enc(name)}`, { method: "DELETE" }).then(json<void>),
   describeModel: (name: string) =>
     fetch(`/api/models/${enc(name)}/describe`, { method: "POST" }).then(json<unknown>),

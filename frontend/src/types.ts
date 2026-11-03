@@ -42,6 +42,12 @@ export interface ModelInfo {
   error: string;
 }
 
+export interface LoadedModel {
+  name: string;
+  size_vram: number;
+  expires_at: string | null;
+}
+
 export interface SSEEvent {
   event: string;
   data: any;

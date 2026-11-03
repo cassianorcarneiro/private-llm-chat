@@ -4,7 +4,7 @@ import Sidebar from "./components/Sidebar";
 import MessageView from "./components/MessageView";
 import Composer from "./components/Composer";
 import ModelManager from "./components/ModelManager";
-import type { ChatMessage, ConversationSummary, ModelInfo } from "./types";
+import type { ChatMessage, ConversationSummary, LoadedModel, ModelInfo } from "./types";
 
 const MODEL_KEY = "private-llm-chat.model";
 
@@ -21,6 +21,7 @@ export default function App() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [models, setModels] = useState<ModelInfo[]>([]);
+  const [loaded, setLoaded] = useState<LoadedModel[]>([]);
   const [model, setModel] = useState<string>(loadModel);
   // Off by default on every load: web search is the only path where data leaves the server.
   const [webSearch, setWebSearch] = useState(false);
@@ -47,10 +48,40 @@ export default function App() {
       .catch((e) => setBanner(String(e.message ?? e)));
   }, []);
 
+  const refreshLoaded = useCallback(() => {
+    api.loadedModels().then(setLoaded).catch(() => {
+      /* transient: keep the last known state */
+    });
+  }, []);
+
   useEffect(() => {
     refreshConversations();
     refreshModels();
-  }, [refreshConversations, refreshModels]);
+    refreshLoaded();
+  }, [refreshConversations, refreshModels, refreshLoaded]);
+
+  // VRAM state changes outside this page too (keep_alive expiry, other apps,
+  // the CLI), so poll it. Paused while the tab is hidden.
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === "visible") refreshLoaded();
+    };
+    const t = setInterval(tick, 15_000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [refreshLoaded]);
+
+  const unload = async (name?: string) => {
+    try {
+      const res = await api.unloadModels(name);
+      setLoaded(res.loaded);
+    } catch (e: any) {
+      setBanner(String(e.message ?? e));
+    }
+  };
 
   // Poll while descriptions are being generated or the manager is open.
   const describing = models.some((m) => m.status === "pending" || m.status === "describing");
@@ -114,6 +145,7 @@ export default function App() {
   const send = async (text: string) => {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    let sawToken = false;
     setStreaming(true);
     stickToBottom.current = true;
     setMessages((ms) => [
@@ -144,6 +176,11 @@ export default function App() {
             updateLast((m) => ({ ...m, thinking: (m.thinking ?? "") + d.text }));
             break;
           case "token":
+            // First token: the model is now resident, so show it in the VRAM panel.
+            if (!sawToken) {
+              sawToken = true;
+              refreshLoaded();
+            }
             updateLast((m) => ({ ...m, content: m.content + d.text, status: "" }));
             break;
           case "stats":
@@ -165,6 +202,7 @@ export default function App() {
       setStreaming(false);
       abortRef.current = null;
       refreshConversations();
+      refreshLoaded();
     }
   };
 
@@ -173,6 +211,9 @@ export default function App() {
   return (
     <div className="app">
       <Sidebar
+        loaded={loaded}
+        streaming={streaming}
+        onUnload={unload}
         conversations={conversations}
         activeId={activeId}
         open={sidebarOpen}
@@ -235,7 +276,14 @@ export default function App() {
       </main>
 
       {showModels && (
-        <ModelManager models={models} onClose={() => setShowModels(false)} onChanged={refreshModels} />
+        <ModelManager
+          models={models}
+          loaded={loaded}
+          streaming={streaming}
+          onUnload={unload}
+          onClose={() => setShowModels(false)}
+          onChanged={refreshModels}
+        />
       )}
     </div>
   );

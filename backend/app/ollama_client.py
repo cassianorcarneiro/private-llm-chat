@@ -50,6 +50,15 @@ class OllamaClient:
     async def show(self, name: str) -> dict:
         return await self._json("POST", "/api/show", json={"model": name})
 
+    async def unload(self, name: str) -> None:
+        """Evict a model from VRAM now.
+
+        A generate request with no prompt and keep_alive=0 is Ollama's documented
+        unload call; `ollama stop` sends the same request. If the model is serving
+        another request, Ollama unloads it when that request finishes.
+        """
+        await self._json("POST", "/api/generate", json={"model": name, "keep_alive": 0})
+
     async def delete(self, name: str) -> None:
         await self._json("DELETE", "/api/delete", json={"model": name})
 
