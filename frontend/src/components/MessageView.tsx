@@ -2,7 +2,14 @@ import { memo, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import { normalizeMath } from "../math";
 import type { ChatMessage, Source } from "../types";
+
+// throwOnError=false renders invalid TeX as red source text instead of breaking
+// the whole message. This matters while streaming, when a formula is incomplete.
+const katexOptions = { throwOnError: false, strict: "ignore" as const };
 
 const mdComponents = {
   a: (props: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
@@ -13,8 +20,12 @@ const mdComponents = {
 function Markdownish({ text }: { text: string }) {
   return (
     <div className="md">
-      <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={mdComponents}>
-        {text}
+      <Markdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[[rehypeKatex, katexOptions], rehypeHighlight]}
+        components={mdComponents}
+      >
+        {normalizeMath(text)}
       </Markdown>
     </div>
   );

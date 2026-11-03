@@ -14,6 +14,7 @@ SYSTEM = """You are a helpful assistant running entirely on the user's private s
 Today is {today}.
 Answer in the same language the user writes in.
 Use Markdown when it helps: fenced code blocks with a language tag, tables, short lists.
+Write math in LaTeX: $...$ for inline formulas and $$...$$ on their own lines for display formulas.
 If you are not sure about something, say so instead of guessing."""
 
 SUMMARY_BLOCK = """Summary of the earlier part of this conversation (those messages are no longer shown):

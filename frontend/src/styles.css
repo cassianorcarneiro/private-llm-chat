@@ -89,6 +89,9 @@ a { color: var(--accent); }
 .md table { border-collapse: collapse; display: block; overflow-x: auto; margin: 0 0 1em; }
 .md th, .md td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; }
 .md th { background: var(--panel-2); }
+.md .katex { font-size: 1.05em; }
+/* Long display equations scroll instead of overflowing the column on phones. */
+.md .katex-display { overflow-x: auto; overflow-y: hidden; padding: 4px 0; margin: 0.6em 0 1em; }
 .md blockquote { margin: 0 0 1em; padding-left: 12px; border-left: 3px solid var(--line); color: var(--muted); }
 
 .thinking { margin-bottom: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }

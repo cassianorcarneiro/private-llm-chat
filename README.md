@@ -40,6 +40,7 @@ With the web toggle off, no byte of the conversation leaves the server.
 - **Model management.** Pull and delete models from the UI, with download progress.
 - **Web search toggle.** Off by default. Answers cite their sources as `[n]`.
 - **Conversation history.** Resume, rename and delete. Long chats are summarized instead of silently truncated.
+- **Rich rendering.** Markdown, syntax-highlighted code and LaTeX math (KaTeX, bundled locally, no CDN).
 - **Streaming.** Separate reasoning trace for thinking models, tokens/s, and a stop button that keeps the partial answer.
 - **Responsive UI.** Works on desktop and phone.
 
