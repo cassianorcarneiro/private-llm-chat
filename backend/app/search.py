@@ -21,7 +21,7 @@ from .ollama_client import ollama
 
 log = logging.getLogger(__name__)
 
-USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) local-ai-chat/1.0"
+USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) private-llm-chat/1.0"
 _WORD = re.compile(r"\w{3,}", re.UNICODE)
 
 

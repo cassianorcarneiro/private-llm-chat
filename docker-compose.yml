@@ -1,7 +1,7 @@
 services:
   app:
     build: .
-    container_name: local-ai-chat
+    container_name: private-llm-chat
     restart: unless-stopped
     # Bound to loopback only. Exposed to the tailnet via `tailscale serve`.
     ports:
@@ -23,7 +23,7 @@ services:
 
   postgres:
     image: postgres:17-alpine
-    container_name: local-ai-chat-db
+    container_name: private-llm-chat-db
     restart: unless-stopped
     environment:
       POSTGRES_USER: chat
@@ -39,7 +39,7 @@ services:
 
   searxng:
     image: searxng/searxng:latest
-    container_name: local-ai-chat-searxng
+    container_name: private-llm-chat-searxng
     restart: unless-stopped
     # No published port: only the app container reaches it.
     environment:

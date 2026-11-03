@@ -39,7 +39,7 @@ export default function Sidebar(p: Props) {
         <div className="sidebar-head">
           <div className="brand">
             <span className="brand-mark" />
-            Local AI Chat
+            Private LLM Chat
           </div>
           <button className="btn primary block" onClick={p.onNew}>
             + New chat

@@ -3,7 +3,7 @@
 use_default_settings: true
 
 general:
-  instance_name: "local-ai-chat"
+  instance_name: "private-llm-chat"
 
 server:
   # Overridden by the SEARXNG_SECRET environment variable.

@@ -6,7 +6,7 @@ import Composer from "./components/Composer";
 import ModelManager from "./components/ModelManager";
 import type { ChatMessage, ConversationSummary, ModelInfo } from "./types";
 
-const MODEL_KEY = "local-ai-chat.model";
+const MODEL_KEY = "private-llm-chat.model";
 
 function loadModel(): string {
   try {

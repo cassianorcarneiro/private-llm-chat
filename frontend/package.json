@@ -1,5 +1,5 @@
 {
-  "name": "local-ai-chat-frontend",
+  "name": "private-llm-chat-frontend",
   "private": true,
   "version": "1.0.0",
   "type": "module",

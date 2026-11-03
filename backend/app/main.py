@@ -45,7 +45,7 @@ async def lifespan(_: FastAPI):
     await ollama.close()
 
 
-app = FastAPI(title="local-ai-chat", lifespan=lifespan)
+app = FastAPI(title="private-llm-chat", lifespan=lifespan)
 
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 

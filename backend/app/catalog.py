@@ -46,7 +46,7 @@ async def fetch_model_card(name: str) -> tuple[str, str]:
     url = model_card_url(name)
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            r = await client.get(url, headers={"User-Agent": "local-ai-chat/1.0"})
+            r = await client.get(url, headers={"User-Agent": "private-llm-chat/1.0"})
             r.raise_for_status()
         text = await asyncio.to_thread(trafilatura.extract, r.text, include_tables=True) or ""
         return text[:6000], url
