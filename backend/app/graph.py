@@ -14,6 +14,7 @@ would force an unload/reload on every turn.
 
 import json
 import logging
+from contextlib import aclosing
 from typing import TypedDict
 
 from langgraph.config import get_stream_writer
@@ -21,10 +22,15 @@ from langgraph.graph import END, START, StateGraph
 
 from . import prompts
 from .config import settings
+from .loopguard import find_loop
+from .memory import est_tokens
 from .ollama_client import ollama, think_off
 from .search import web_research
 
 log = logging.getLogger(__name__)
+
+# Run the repetition check after this many new characters. It costs ~0.1 ms.
+LOOP_CHECK_EVERY = 48
 
 
 class ChatState(TypedDict, total=False):
@@ -110,23 +116,55 @@ async def generate(state: ChatState) -> dict:
         *state.get("history", []),
         {"role": "user", "content": state["user_input"]},
     ]
-    async for chunk in ollama.chat_stream(
-        state["model"], messages, options={"num_ctx": state["num_ctx"]}
-    ):
-        msg = chunk.get("message") or {}
-        if msg.get("thinking"):
-            write({"type": "thinking", "text": msg["thinking"]})
-        if msg.get("content"):
-            write({"type": "token", "text": msg["content"]})
-        if chunk.get("done"):
-            write(
-                {
-                    "type": "stats",
-                    "prompt_tokens": chunk.get("prompt_eval_count"),
-                    "output_tokens": chunk.get("eval_count"),
-                    "eval_duration_ns": chunk.get("eval_duration"),
-                }
-            )
+    # Cap the output at the room left in the context window. Without a cap,
+    # Ollama keeps generating after the window is full by discarding old tokens
+    # ("context shift"). A model that has started to loop then never stops.
+    # est_tokens overestimates, so the cap errs on the short side.
+    prompt_tokens = sum(est_tokens(m["content"]) for m in messages)
+    options = {
+        "num_ctx": state["num_ctx"],
+        "num_predict": max(512, state["num_ctx"] - prompt_tokens),
+    }
+
+    answer = ""
+    checked = 0
+    # aclosing() closes the HTTP stream as soon as we leave the loop, which makes
+    # Ollama stop generating. Without it, closing waits for garbage collection.
+    async with aclosing(ollama.chat_stream(state["model"], messages, options=options)) as stream:
+        async for chunk in stream:
+            msg = chunk.get("message") or {}
+            if msg.get("thinking"):
+                write({"type": "thinking", "text": msg["thinking"]})
+            if msg.get("content"):
+                answer += msg["content"]
+                write({"type": "token", "text": msg["content"]})
+                if len(answer) - checked >= LOOP_CHECK_EVERY:
+                    checked = len(answer)
+                    keep = find_loop(answer)
+                    if keep is not None:
+                        log.warning(
+                            "repetition loop from %s: stopped at %d chars, kept %d",
+                            state["model"], len(answer), keep,
+                        )
+                        write({"type": "loop", "keep": keep})
+                        break
+            if chunk.get("done"):
+                write(
+                    {
+                        "type": "stats",
+                        "prompt_tokens": chunk.get("prompt_eval_count"),
+                        "output_tokens": chunk.get("eval_count"),
+                        "eval_duration_ns": chunk.get("eval_duration"),
+                    }
+                )
+                if chunk.get("done_reason") == "length":
+                    write(
+                        {
+                            "type": "notice",
+                            "text": "The answer was cut at the context limit. "
+                            "Start a new chat or raise DEFAULT_NUM_CTX.",
+                        }
+                    )
     return {}
 
 

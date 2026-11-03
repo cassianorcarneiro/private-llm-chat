@@ -65,6 +65,7 @@ function MessageView({ m }: { m: ChatMessage }) {
       )}
 
       {m.status && <div className="status-line">{m.status}</div>}
+      {m.notice && <div className="notice-box">{m.notice}</div>}
       {m.error && <div className="error-box">{m.error}</div>}
 
       {sources.length > 0 && (

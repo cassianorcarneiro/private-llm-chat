@@ -410,6 +410,11 @@ async def chat(req: ChatRequest):
                     thinking.append(ev["text"])
                 elif kind == "sources":
                     sources = ev["sources"]
+                elif kind == "loop":
+                    # The model looped: keep one copy of the repeated block, so
+                    # the stored answer does not poison the next turns' history.
+                    joined = "".join(answer)
+                    answer[:] = [joined[: ev["keep"]]]
                 yield sse(kind, ev)
 
             await _persist_assistant(

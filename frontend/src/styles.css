@@ -111,6 +111,8 @@ a { color: var(--accent); }
 @keyframes pulse { 50% { opacity: 0.45; } }
 .error-box { margin-top: 10px; border: 1px solid #5a2a26; background: #2a1715; color: #f2b8b2; padding: 8px 12px; border-radius: 8px; font-size: 13.5px; white-space: pre-wrap; }
 
+.notice-box { margin-top: 10px; border: 1px solid #4a3c25; background: #211b10; color: #e3c48f; padding: 8px 12px; border-radius: 8px; font-size: 13.5px; }
+
 .typing { display: flex; gap: 5px; padding: 8px 0; }
 .typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: bounce 1.2s infinite ease-in-out; }
 .typing span:nth-child(2) { animation-delay: 0.15s; }

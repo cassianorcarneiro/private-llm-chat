@@ -168,7 +168,7 @@ There is no telemetry. To also hide your IP from search engines, route the SearX
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/chat` | SSE stream: `meta`, `status`, `sources`, `thinking`, `token`, `stats`, `done`, `error` |
+| `POST` | `/api/chat` | SSE stream: `meta`, `status`, `sources`, `thinking`, `token`, `stats`, `loop`, `notice`, `done`, `error` |
 | `GET` | `/api/conversations` | List conversations |
 | `GET` / `PATCH` / `DELETE` | `/api/conversations/{id}` | Read with messages / rename / delete |
 | `GET` | `/api/models` | Installed models with metadata and descriptions |
@@ -205,6 +205,11 @@ history budget = num_ctx − response reserve − system prompt − user message
 
 Messages that no longer fit are merged into a rolling summary (previous summary + evicted messages). Each turn's cost stays bounded. The window always starts on a user turn, because some chat templates reject a history that opens with an assistant message.
 
+**Runaway generation is stopped by the server.** Small models sometimes fall into a repetition loop and copy the last block they wrote until the context is full. Ollama's default repetition penalty looks only at the last 64 tokens, so a loop with a longer period is not penalized. Two guards, both independent of the model:
+
+- **Output cap.** `num_predict` is set to the room left in the context window. Without it, Ollama keeps generating by discarding old tokens, and a looping model never stops.
+- **Loop detector.** Every 48 characters, the tail of the answer is checked for a block that repeats at equal spacing at least four times (160-character probe). Digits are masked for long blocks, because loops often increment a counter (`[85]`, `[86]`, ...). On a hit, the server closes the stream, which makes Ollama stop, and keeps exactly one copy of the repeated block, so the stored answer does not poison later turns. The check needs 12 distinct characters in the probe, so separators and tables of bare numbers do not match. Three copies of a paragraph, as in "repeat this three times", do not match either.
+
 **History lives in relational tables, not in LangGraph's checkpointer.** The checkpointer stores opaque per-step graph state. The UI must list, rename and delete conversations, which is domain data. LangGraph is used for what it adds: typed state, conditional edges and a streaming channel for node events.
 
 **Model descriptions are grounded.** Ollama has no API for "what is this model good at". An LLM describing a model from its own weights would hallucinate, because most models are newer than its training data. So `/api/show` provides objective metadata, the model's public page provides the author's claims, and a local LLM only condenses the two.
@@ -235,6 +240,7 @@ private-llm-chat/
 │   │   ├── graph.py           # LangGraph pipeline: plan → research → generate
 │   │   ├── search.py          # SearXNG, page fetch, extraction, chunking, ranking
 │   │   ├── memory.py          # Token budget, sliding window, rolling summary
+│   │   ├── loopguard.py       # Repetition-loop detection for streamed output
 │   │   ├── catalog.py         # Model description reconciliation loop
 │   │   ├── ollama_client.py   # Async Ollama API client
 │   │   ├── prompts.py         # All prompt templates

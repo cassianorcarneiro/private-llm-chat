@@ -22,6 +22,8 @@ export interface ChatMessage {
   sources?: Source[] | null;
   // Client-only fields while streaming.
   status?: string;
+  /** Non-error warning shown under the answer, e.g. "stopped: repetition loop". */
+  notice?: string;
   streaming?: boolean;
   error?: string;
   stats?: { output_tokens?: number; eval_duration_ns?: number };

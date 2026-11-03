@@ -186,6 +186,18 @@ export default function App() {
           case "stats":
             updateLast((m) => ({ ...m, stats: d }));
             break;
+          case "loop":
+            // The server detected a repetition loop and stopped the model.
+            // It tells us how much of the text to keep (one copy of the block).
+            updateLast((m) => ({
+              ...m,
+              content: m.content.slice(0, d.keep),
+              notice: "Generation stopped: the model got stuck repeating itself. The repeated text was removed.",
+            }));
+            break;
+          case "notice":
+            updateLast((m) => ({ ...m, notice: d.text }));
+            break;
           case "error":
             updateLast((m) => ({ ...m, error: d.message }));
             break;

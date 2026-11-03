@@ -1,6 +1,7 @@
 """Thin async client for the Ollama HTTP API (native endpoints, not /v1)."""
 
 import json
+from contextlib import aclosing
 from typing import Any, AsyncIterator
 
 import httpx
@@ -92,10 +93,12 @@ class OllamaClient:
 
     async def chat_stream(self, model, messages, options=None, think=None) -> AsyncIterator[dict]:
         payload = self._chat_payload(model, messages, options, True, None, think)
-        async for chunk in self._stream("/api/chat", payload):
-            if "error" in chunk:
-                raise OllamaError(chunk["error"])
-            yield chunk
+        # Close the inner stream explicitly when the consumer stops early.
+        async with aclosing(self._stream("/api/chat", payload)) as stream:
+            async for chunk in stream:
+                if "error" in chunk:
+                    raise OllamaError(chunk["error"])
+                yield chunk
 
     async def embed(self, model: str, inputs: list[str]) -> list[list[float]]:
         data = await self._json("POST", "/api/embed", json={"model": model, "input": inputs})
