@@ -74,6 +74,7 @@ Model page ({source}):
 {card}
 >>>
 
-In {language}, write at most 2 short sentences (max 280 characters):
-what kind of task this model is best at, and one relevant limitation if the source gives one.
-No preamble."""
+In {language}, write 1 or 2 short sentences (max 250 characters).
+Start directly with what the model is best at, e.g. "Code generation and repair across many languages."
+Mention a limitation only if the model page states one explicitly. Never infer one.
+Do not start with "This model"."""
