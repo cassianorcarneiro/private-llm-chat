@@ -110,6 +110,7 @@ a { color: var(--accent); }
 .sources a { color: var(--text); text-decoration: none; }
 .sources a:hover { text-decoration: underline; }
 .sources .host { color: var(--muted); margin-left: 8px; }
+.sources .primary-tag { margin-left: 8px; font-size: 11px; padding: 0 6px; border-radius: 10px; color: var(--accent); border: 1px solid #4a3c25; }
 
 .msg-meta { display: flex; gap: 14px; margin-top: 8px; font-size: 12.5px; color: var(--muted); }
 

@@ -2,7 +2,7 @@ import { memo, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
-import type { ChatMessage } from "../types";
+import type { ChatMessage, Source } from "../types";
 
 const mdComponents = {
   a: (props: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
@@ -31,6 +31,8 @@ function MessageView({ m }: { m: ChatMessage }) {
     );
   }
 
+  const sources = m.streaming ? (m.sources ?? []) : citedSources(m);
+
   const tps =
     m.stats?.output_tokens && m.stats?.eval_duration_ns
       ? (m.stats.output_tokens / (m.stats.eval_duration_ns / 1e9)).toFixed(1)
@@ -54,15 +56,17 @@ function MessageView({ m }: { m: ChatMessage }) {
       {m.status && <div className="status-line">{m.status}</div>}
       {m.error && <div className="error-box">{m.error}</div>}
 
-      {m.sources && m.sources.length > 0 && (
+      {sources.length > 0 && (
         <ol className="sources">
-          {m.sources.map((s) => (
+          {sources.map((s) => (
             <li key={s.n}>
               <span className="n">{s.n}</span>
               <a href={s.url} target="_blank" rel="noopener noreferrer" title={s.url}>
                 {s.title}
               </a>
               <span className="host">{safeHost(s.url)}</span>
+              {s.date && <span className="host">{s.date}</span>}
+              {s.primary && <span className="primary-tag">primary</span>}
             </li>
           ))}
         </ol>
@@ -87,6 +91,21 @@ function MessageView({ m }: { m: ChatMessage }) {
       )}
     </div>
   );
+}
+
+/**
+ * Sources the answer actually cites. Matches [1], [1, 3] and [1][2].
+ * Falls back to all sources if the model cited none, so evidence is never hidden.
+ */
+function citedSources(m: ChatMessage): Source[] {
+  const all = m.sources ?? [];
+  if (!all.length) return all;
+  const cited = new Set<number>();
+  for (const match of m.content.matchAll(/\[(\d+(?:\s*,\s*\d+)*)\]/g)) {
+    for (const n of match[1].split(",")) cited.add(Number(n.trim()));
+  }
+  const used = all.filter((s) => cited.has(s.n));
+  return used.length ? used : all;
 }
 
 function safeHost(url: string): string {

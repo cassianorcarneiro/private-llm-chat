@@ -30,6 +30,19 @@ class Settings(BaseSettings):
     search_top_chunks: int = 6
     # Drop passages scoring below this fraction of the best passage's score.
     search_min_relative_score: float = 0.6
+    # Multiplicative ranking bonus for primary sources: (1 + boost) * similarity.
+    search_authority_boost: float = 0.15
+    # Hosts treated as primary sources, besides a site whose name matches a query term.
+    # Env format: JSON list, e.g. SEARCH_PRIMARY_DOMAINS='["github.com","arxiv.org"]'
+    search_primary_domains: list[str] = [
+        "github.com",
+        "gitlab.com",
+        "readthedocs.io",
+        "pypi.org",
+        "npmjs.com",
+        "huggingface.co",
+        "arxiv.org",
+    ]
     fetch_timeout_s: float = 8.0
     fetch_max_bytes: int = 2_000_000
 

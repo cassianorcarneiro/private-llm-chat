@@ -5,6 +5,14 @@ fetched and their main text extracted. The chunks are then ranked against the
 queries so that only the most relevant passages consume the (scarce) context
 window. Ranking uses a local embedding model and falls back to lexical overlap
 if that model is not installed.
+
+Semantic similarity measures relevance, not reliability: an SEO article titled
+"Latest version of X" matches the question better than the project's own
+release page. Two signals counter that:
+
+- A small authority prior in the ranking, for primary sources.
+- Publication dates in each passage header, so the model can resolve conflicts
+  between sources in favor of the most recent one.
 """
 
 import asyncio
@@ -12,6 +20,7 @@ import logging
 import math
 import re
 from collections import Counter
+from urllib.parse import urlparse
 
 import httpx
 import trafilatura
@@ -23,6 +32,54 @@ log = logging.getLogger(__name__)
 
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) private-llm-chat/1.0"
 _WORD = re.compile(r"\w{3,}", re.UNICODE)
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+# Second-level labels of two-part public suffixes (com.br, co.uk, ...).
+_SLD = {"com", "co", "org", "net", "gov", "edu", "ac", "or", "ne"}
+
+
+# --- Source metadata -------------------------------------------------------------
+
+
+def host_of(url: str) -> str:
+    host = (urlparse(url).hostname or "").lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def site_name(host: str) -> str:
+    """Registrable label of a host: docs.ollama.com -> ollama, foo.com.br -> foo."""
+    labels = host.split(".")
+    if len(labels) >= 3 and labels[-2] in _SLD and len(labels[-1]) == 2:
+        return labels[-3]
+    return labels[-2] if len(labels) >= 2 else host
+
+
+def is_primary(url: str, queries: list[str]) -> bool:
+    """Heuristic for "primary source".
+
+    True for code/package/paper hosts in settings.search_primary_domains, and for
+    sites whose registrable name equals a query term (ollama.com for "ollama ...").
+    The second rule targets a project's own site; it requires an exact label match,
+    so look-alikes such as ollama-guide.net do not qualify.
+    """
+    host = host_of(url)
+    if not host:
+        return False
+    for domain in settings.search_primary_domains:
+        if host == domain or host.endswith("." + domain):
+            return True
+    name = site_name(host)
+    terms = {w.lower() for q in queries for w in _WORD.findall(q)}
+    return len(name) >= 4 and name in terms
+
+
+def normalize_date(value) -> str | None:
+    if not value:
+        return None
+    match = _DATE.match(str(value))
+    return match.group(0) if match else None
+
+
+# --- Search and fetch --------------------------------------------------------------
 
 
 async def searxng_search(query: str, limit: int) -> list[dict]:
@@ -37,22 +94,36 @@ async def searxng_search(query: str, limit: int) -> list[dict]:
     for item in results:
         if item.get("url"):
             out.append(
-                {"url": item["url"], "title": item.get("title", ""), "snippet": item.get("content", "")}
+                {
+                    "url": item["url"],
+                    "title": item.get("title", ""),
+                    "snippet": item.get("content", ""),
+                    "date": normalize_date(item.get("publishedDate")),
+                }
             )
         if len(out) >= limit:
             break
     return out
 
 
-async def fetch_text(client: httpx.AsyncClient, url: str) -> str | None:
-    """Download a page (size-capped) and extract its main text."""
+def _extract(html: str) -> tuple[str | None, str | None]:
+    doc = trafilatura.bare_extraction(
+        html, with_metadata=True, include_comments=False, include_tables=True
+    )
+    if doc is None:
+        return None, None
+    return doc.text, normalize_date(doc.date)
+
+
+async def fetch_page(client: httpx.AsyncClient, url: str) -> tuple[str | None, str | None]:
+    """Download a page (size-capped). Return (main text, publication date)."""
     try:
         async with client.stream("GET", url, follow_redirects=True) as r:
             if r.status_code != 200:
-                return None
+                return None, None
             ctype = r.headers.get("content-type", "")
             if "html" not in ctype and "text/plain" not in ctype:
-                return None
+                return None, None
             buf = bytearray()
             async for chunk in r.aiter_bytes():
                 buf.extend(chunk)
@@ -61,14 +132,15 @@ async def fetch_text(client: httpx.AsyncClient, url: str) -> str | None:
             encoding = r.encoding or "utf-8"
         html = buf.decode(encoding, errors="replace")
         if "text/plain" in ctype:
-            return html
+            return html, None
         # trafilatura is CPU-bound; keep it off the event loop.
-        return await asyncio.to_thread(
-            trafilatura.extract, html, include_comments=False, include_tables=True
-        )
+        return await asyncio.to_thread(_extract, html)
     except Exception as exc:  # network errors, decoding errors, extractor errors
         log.info("fetch failed for %s: %s", url, exc)
-        return None
+        return None, None
+
+
+# --- Chunking and ranking ------------------------------------------------------------
 
 
 def chunk_text(text: str, size: int = 900, overlap: int = 150) -> list[str]:
@@ -106,7 +178,11 @@ def _lexical(query: str, text: str) -> float:
 
 
 async def rank_chunks(queries: list[str], chunks: list[dict]) -> tuple[list[dict], str]:
-    """Rank chunks by max similarity to any query.
+    """Rank chunks by max similarity to any query, times an authority prior.
+
+    The prior is multiplicative, (1 + boost) for primary sources, so it only
+    reorders passages of comparable relevance. An irrelevant passage from a
+    primary site still ranks low.
 
     Chunks scoring below a fraction of the best score are dropped. A relative
     cut is used because absolute cosine ranges differ between embedding models.
@@ -125,10 +201,23 @@ async def rank_chunks(queries: list[str], chunks: list[dict]) -> tuple[list[dict
         log.warning("embedding rank failed (%s); using lexical ranking", exc)
         scores = [max(_lexical(q, c["text"]) for q in queries) for c in chunks]
         method = "lexical"
+    boost = 1.0 + settings.search_authority_boost
+    scores = [s * boost if c["primary"] else s for s, c in zip(scores, chunks)]
     order = sorted(range(len(chunks)), key=lambda i: scores[i], reverse=True)
     best = scores[order[0]]
     cutoff = best * settings.search_min_relative_score if best > 0 else 0.0
     return [chunks[i] for i in order if scores[i] >= cutoff], method
+
+
+# --- Pipeline ------------------------------------------------------------------------
+
+
+def _header(n: int, c: dict) -> str:
+    parts = [f"[{n}] {c['title'] or c['host']}", f"site: {c['host']}"]
+    parts.append(f"published: {c['date']}" if c["date"] else "published: unknown")
+    if c["primary"]:
+        parts.append("primary source")
+    return " | ".join(parts) + f"\nURL: {c['url']}"
 
 
 async def web_research(queries: list[str], max_chars: int) -> tuple[str, list[dict], str]:
@@ -150,23 +239,42 @@ async def web_research(queries: list[str], max_chars: int) -> tuple[str, list[di
     if not hits:
         return "", [], "none"
 
+    for h in hits:
+        h["host"] = host_of(h["url"])
+        h["primary"] = is_primary(h["url"], queries)
+
+    # Fetch the top hits, plus up to two primary sources further down the list.
+    # Engines often rank SEO pages above a project's own release page.
     to_fetch = hits[: settings.search_fetch_pages]
+    extra = [h for h in hits[settings.search_fetch_pages:] if h["primary"]][:2]
+    to_fetch += extra
     async with httpx.AsyncClient(
         timeout=settings.fetch_timeout_s, headers={"User-Agent": USER_AGENT}
     ) as client:
-        texts = await asyncio.gather(*(fetch_text(client, h["url"]) for h in to_fetch))
+        pages = await asyncio.gather(*(fetch_page(client, h["url"]) for h in to_fetch))
+
+    def meta(h: dict, date: str | None = None) -> dict:
+        return {
+            "url": h["url"],
+            "title": h["title"],
+            "host": h["host"],
+            "primary": h["primary"],
+            "date": date or h["date"],
+        }
 
     chunks: list[dict] = []
-    for hit, text in zip(to_fetch, texts):
+    fetched = set()
+    for hit, (text, date) in zip(to_fetch, pages):
+        fetched.add(hit["url"])
         if text:
             for c in chunk_text(text)[:12]:
-                chunks.append({"url": hit["url"], "title": hit["title"], "text": c})
+                chunks.append({**meta(hit, date), "text": c})
         elif hit["snippet"]:
-            chunks.append({"url": hit["url"], "title": hit["title"], "text": hit["snippet"]})
-    for hit in hits[settings.search_fetch_pages:]:
-        if hit["snippet"]:
-            chunks.append({"url": hit["url"], "title": hit["title"], "text": hit["snippet"]})
-    chunks = chunks[:80]
+            chunks.append({**meta(hit), "text": hit["snippet"]})
+    for hit in hits:
+        if hit["url"] not in fetched and hit["snippet"]:
+            chunks.append({**meta(hit), "text": hit["snippet"]})
+    chunks = chunks[:90]
 
     ranked, method = await rank_chunks(queries, chunks)
 
@@ -187,7 +295,14 @@ async def web_research(queries: list[str], max_chars: int) -> tuple[str, list[di
     for c in selected:
         if c["url"] not in index:
             index[c["url"]] = len(sources) + 1
-            sources.append({"n": index[c["url"]], "url": c["url"], "title": c["title"] or c["url"]})
-        n = index[c["url"]]
-        blocks.append(f"[{n}] {c['title']}\nURL: {c['url']}\n{c['text']}")
+            sources.append(
+                {
+                    "n": index[c["url"]],
+                    "url": c["url"],
+                    "title": c["title"] or c["url"],
+                    "date": c["date"],
+                    "primary": c["primary"],
+                }
+            )
+        blocks.append(_header(index[c["url"]], c) + "\n" + c["text"])
     return "\n\n---\n\n".join(blocks), sources, method

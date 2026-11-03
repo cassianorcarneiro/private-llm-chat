@@ -9,6 +9,8 @@ export interface Source {
   n: number;
   url: string;
   title: string;
+  date?: string | null;
+  primary?: boolean;
 }
 
 export interface ChatMessage {

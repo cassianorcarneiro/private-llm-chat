@@ -141,6 +141,8 @@ All settings are environment variables in `.env`. See [`.env.example`](.env.exam
 | `DEFAULT_NUM_CTX` | Context window sent to Ollama, capped by each model's limit (default: `8192`) |
 | `KEEP_ALIVE` | How long a model stays in VRAM after the last request (default: `15m`) |
 | `EMBED_MODEL` | Embedding model for passage ranking (default: `nomic-embed-text`) |
+| `SEARCH_AUTHORITY_BOOST` | Ranking bonus for primary sources (default: `0.15`) |
+| `SEARCH_PRIMARY_DOMAINS` | JSON list of hosts treated as primary sources (default: code, package and paper hosts) |
 | `CATALOG_ENABLED` | Auto-describe installed models (default: `true`) |
 | `CATALOG_FETCH_REMOTE` | Fetch the model's public page to ground descriptions (default: `true`) |
 | `DESCRIBER_MODEL` | Model that writes descriptions (default: the loaded one, else the model itself) |
@@ -183,6 +185,12 @@ There is no telemetry. To also hide your IP from search engines, route the SearX
 
 **Fetch and rerank, not snippets.** Search-engine snippets are too short to ground an answer. Pages are downloaded with a size cap and their main text is extracted. Passages are ranked by maximum cosine similarity to any query. Passages below 60% of the best score are dropped, and at most two are kept per page. Without an embedding model, ranking falls back to lexical overlap.
 
+**Relevance is not reliability.** An SEO article titled "Latest version of X" matches the question better than the project's own release page, and may be weeks out of date. Three mechanisms counter that:
+
+- **Query language.** The planner writes queries in the language most likely to reach primary sources (English for software and science), not necessarily the user's language.
+- **Authority prior.** Primary sources get a multiplicative ranking bonus, `(1 + 0.15) × similarity`, so the bonus only reorders passages of comparable relevance. A source is primary if its host is a code, package or paper host (`github.com`, `pypi.org`, `arxiv.org`, …) or if its registrable name equals a query term (`ollama.com` for "ollama …"; `ollama-guide.net` does not qualify). Up to two primary hits beyond the top 5 are also fetched, since engines often rank them lower.
+- **Dates in context.** Each passage header carries its site, publication date (from page metadata) and a primary-source flag. The model is instructed to prefer the most recent and primary source when results disagree, and to state the disagreement.
+
 **Web content is untrusted.** Retrieved text is wrapped in delimiters with an explicit instruction to treat it as data. The app takes no actions, so prompt injection can only affect the answer text.
 
 **`num_ctx` is always explicit.** Ollama's default context is small and truncates silently. The app sends `min(DEFAULT_NUM_CTX, model limit)` and fits the history to that budget:
@@ -206,6 +214,7 @@ Messages that no longer fit are merged into a rolling summary (previous summary 
 - **Single user.** There is no app-level authentication. Access control is the tailnet. Do not publish the port to the LAN or the internet.
 - **Local model quality.** Models that fit in 16 GB do well on everyday tasks but fall behind commercial models on long reasoning.
 - **Search depends on public engines.** SearXNG aggregates several engines, but any of them can rate-limit or block it.
+- **Source authority is a heuristic.** Name matching misses official sites on unrelated domains, and publication dates are only as good as the page metadata.
 - **Token counts are estimated.** The budget uses ~3 characters per token, which errs on the safe side but wastes some context.
 - **No schema migrations.** Tables are created with `create_all`. Add Alembic before changing the models.
 - **Text only.** No file uploads or image input yet, even for vision-capable models.
