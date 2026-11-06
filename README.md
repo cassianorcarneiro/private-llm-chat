@@ -1,87 +1,88 @@
-# 🔒 Private LLM Chat
+# Private LLM Chat
 
-> A self-hosted chat portal for local LLMs. Inference never leaves your machine.
+A self-hosted chat portal for local LLMs. Inference never leaves your machine.
 
-A web app that puts a ChatGPT-style interface in front of models served by [Ollama](https://ollama.com). It adds a model picker with auto-generated descriptions, opt-in web search through a self-hosted [SearXNG](https://github.com/searxng/searxng) instance, and persistent conversation history. Built for a single-GPU home server reached over a Tailscale tailnet.
+![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-1C3C3C?logo=langchain&logoColor=white)
+![React](https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=black)
+![Ollama](https://img.shields.io/badge/inference-Ollama-black)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Status](https://img.shields.io/badge/status-beta-orange)
 
-<p align="center">
-  <img alt="Stack" src="https://img.shields.io/badge/Stack-FastAPI%20%2B%20LangGraph%20%2B%20React-blue?style=for-the-badge">
-  <img alt="Inference" src="https://img.shields.io/badge/Inference-Ollama-black?style=for-the-badge">
-  <img alt="License" src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge">
-  <img alt="Status" src="https://img.shields.io/badge/Status-Beta-orange?style=for-the-badge">
-</p>
+## Overview
 
----
+A ChatGPT-style web interface in front of models served by [Ollama](https://ollama.com). It adds a model picker with auto-generated descriptions, opt-in web search through a self-hosted [SearXNG](https://github.com/searxng/searxng) instance, and persistent conversation history. It is built for a single-GPU home server reached over a Tailscale tailnet.
 
-## 📦 How it works
+## Features
 
-1. **Pick a model.** The selector lists every chat model installed in Ollama. Each one shows a short description of what it is good at.
-2. **Plan.** If the web toggle is on, the selected model decides whether a search is needed. It writes 1 to 3 search queries as structured JSON.
+- **Model picker with descriptions.** Generated automatically when a model appears in Ollama, including models pulled from the CLI.
+- **Model management.** Pull and delete models from the UI, with download progress.
+- **GPU memory control.** See which models are resident in VRAM and unload them on demand.
+- **Web search toggle.** Off by default. Answers cite their sources as `[n]`.
+- **Conversation history.** Resume, rename and delete. Long chats are summarized, not silently truncated.
+- **Rich rendering.** Markdown, syntax-highlighted code and LaTeX via KaTeX, bundled locally with no CDN.
+- **Streaming.** Separate reasoning trace for thinking models, tokens/s, and a stop button that keeps the partial answer.
+- **Responsive UI.** Works on desktop and phone.
+
+## How it works
+
+```mermaid
+flowchart LR
+    M["Message"] --> P{"plan"}
+    P -->|"web on, search needed"| R["research"]
+    P -->|"web off, or no search needed"| G["generate"]
+    R --> G
+    G --> S["SSE stream"]
+```
+
+1. **Pick a model.** The selector lists every installed chat model, each with a short description.
+2. **Plan.** With the web toggle on, the selected model decides whether a search is needed. It writes 1 to 3 queries as structured JSON.
 3. **Research.** Queries go to SearXNG. The top pages are downloaded and their main text is extracted.
 4. **Rank.** Pages are split into passages. A local embedding model ranks them against the queries. Only the best passages enter the prompt.
 5. **Fit the context.** Recent messages are sent verbatim. Older ones are folded into a rolling summary.
 6. **Generate.** The answer streams token by token, with numbered citations when the web was used.
 
+With the web toggle off, no part of the conversation leaves the server.
+
+### Deployment
+
+```mermaid
+flowchart LR
+    B["Browser"] -->|"HTTPS<br/>tailscale serve"| A["app container<br/>:8080 → 127.0.0.1:8088"]
+    A --> O["Ollama<br/>host, GPU"]
+    A --> D[("PostgreSQL<br/>history, model catalog")]
+    A --> X["SearXNG"] --> E["Search engines"]
 ```
-                     ┌──────────── web toggle on ────────────┐
-                     │                                       ▼
-  message ──▶  plan ─┤                                    research ──▶ generate ──▶ stream
-                     │                                                   ▲
-                     └──────────── no search needed ─────────────────────┘
-```
 
-With the web toggle off, no byte of the conversation leaves the server.
+The app listens on port 8080 inside its container. Compose publishes it on the host at `127.0.0.1:${APP_PORT}` (default 8088), loopback only.
 
----
-
-## ✨ Features
-
-- **Model picker with descriptions.** Generated automatically when a model appears in Ollama, including models pulled from the CLI.
-- **Model management.** Pull and delete models from the UI, with download progress.
-- **GPU memory control.** See which models are resident in VRAM and unload them on demand, to free the GPU for other workloads.
-- **Web search toggle.** Off by default. Answers cite their sources as `[n]`.
-- **Conversation history.** Resume, rename and delete. Long chats are summarized instead of silently truncated.
-- **Rich rendering.** Markdown, syntax-highlighted code and LaTeX math (KaTeX, bundled locally, no CDN).
-- **Streaming.** Separate reasoning trace for thinking models, tokens/s, and a stop button that keeps the partial answer.
-- **Responsive UI.** Works on desktop and phone.
-
----
-
-## 🧰 What's under the hood
+## Tech stack
 
 | Component | Technology |
-|-----------|------------|
-| Model serving | [`Ollama`](https://ollama.com) (host, GPU) |
-| Answer pipeline | [`LangGraph`](https://langchain-ai.github.io/langgraph/) |
-| API and streaming (SSE) | [`FastAPI`](https://fastapi.tiangolo.com) |
-| Persistence | [`PostgreSQL`](https://www.postgresql.org) via [`SQLAlchemy`](https://www.sqlalchemy.org) (async) |
-| Web search | [`SearXNG`](https://github.com/searxng/searxng) (self-hosted metasearch) |
-| Page text extraction | [`trafilatura`](https://trafilatura.readthedocs.io) |
-| Passage ranking | [`nomic-embed-text`](https://ollama.com/library/nomic-embed-text) via Ollama |
-| Frontend | [`React`](https://react.dev) + [`Vite`](https://vite.dev), [`react-markdown`](https://github.com/remarkjs/react-markdown), [`highlight.js`](https://highlightjs.org) |
+|---|---|
+| Model serving | [Ollama](https://ollama.com), on the host GPU |
+| Answer pipeline | [LangGraph](https://langchain-ai.github.io/langgraph/) |
+| API and streaming (SSE) | [FastAPI](https://fastapi.tiangolo.com) |
+| Persistence | [PostgreSQL](https://www.postgresql.org) through async [SQLAlchemy](https://www.sqlalchemy.org) |
+| Web search | [SearXNG](https://github.com/searxng/searxng), self-hosted metasearch |
+| Page text extraction | [trafilatura](https://trafilatura.readthedocs.io) |
+| Passage ranking | [nomic-embed-text](https://ollama.com/library/nomic-embed-text) via Ollama |
+| Frontend | [React](https://react.dev) + [Vite](https://vite.dev), [react-markdown](https://github.com/remarkjs/react-markdown), [highlight.js](https://highlightjs.org) |
 | Deployment | Docker Compose, exposed with `tailscale serve` |
 
-```
-browser ──HTTPS (tailscale serve)──▶ app :8080 ─┬─▶ Ollama (host, GPU)
-                                                ├─▶ Postgres   (history, model catalog)
-                                                └─▶ SearXNG ──▶ search engines
-```
+## Requirements
 
----
-
-## 📋 Prerequisites
-
-- **Docker** with Compose v2
-- **Ollama** on the host, reachable from containers (see [Reaching Ollama](#-reaching-ollama-from-the-container))
+- Docker with Compose v2
+- Ollama on the host, reachable from containers (see [Reaching Ollama from the container](#reaching-ollama-from-the-container))
 - At least one chat model, e.g. `ollama pull qwen3:14b`
-- Recommended: `ollama pull nomic-embed-text` for passage ranking
-- **Tailscale** to access it from other devices
+- Recommended: `ollama pull nomic-embed-text`, for passage ranking
+- Tailscale, for access from other devices
 
-> **Note:** On a 16 GB GPU, models up to ~14B parameters at Q4/Q5 fit entirely in VRAM with a comfortable context window.
+> [!TIP]
+> On a 16 GB GPU, models up to ~14B parameters at Q4/Q5 quantization fit entirely in VRAM with a comfortable context window.
 
----
-
-## 🚀 Quick start
+## Getting started
 
 ### Install
 
@@ -94,7 +95,12 @@ sed -i "s/^SEARXNG_SECRET=.*/SEARXNG_SECRET=$(openssl rand -hex 32)/" .env
 docker compose up -d --build
 ```
 
-The app listens on `127.0.0.1:8088` only.
+### Check
+
+```bash
+curl http://127.0.0.1:8088/api/health
+# {"ollama": true, "searxng": true}
+```
 
 ### Publish to your tailnet
 
@@ -103,16 +109,9 @@ sudo tailscale serve --bg --https=8443 http://127.0.0.1:8088
 # → https://<host>.<tailnet>.ts.net:8443
 ```
 
-### Check
+### Reaching Ollama from the container
 
-```bash
-curl http://localhost:8088/api/health
-# {"ollama": true, "searxng": true}
-```
-
-### 🔌 Reaching Ollama from the container
-
-The app calls `http://host.docker.internal:11434`. Compose maps that name to the `docker0` address (`172.17.0.1`). Ollama must listen there:
+The app calls `http://host.docker.internal:11434`. Compose maps that name to the `docker0` bridge address, `172.17.0.1`. Ollama must listen there:
 
 ```bash
 sudo systemctl edit ollama
@@ -127,50 +126,47 @@ This keeps Ollama off the LAN and the tailnet. Compose networks use other subnet
 sudo ufw allow from 172.16.0.0/12 to 172.17.0.1 port 11434 proto tcp
 ```
 
----
-
-## ⚙️ Configuration
+## Configuration
 
 All settings are environment variables in `.env`. See [`.env.example`](.env.example).
 
-| Variable | Description |
-|----------|-------------|
-| `POSTGRES_PASSWORD` | Database password (required) |
-| `SEARXNG_SECRET` | SearXNG secret key (required) |
-| `APP_PORT` | Host port, bound to `127.0.0.1` (default: `8088`) |
-| `OLLAMA_BASE_URL` | Ollama endpoint (default: `http://host.docker.internal:11434`) |
-| `TIMEZONE` | Used for "today" in prompts (default: `America/Sao_Paulo`) |
-| `DEFAULT_NUM_CTX` | Context window sent to Ollama, capped by each model's limit (default: `8192`) |
-| `KEEP_ALIVE` | How long a model stays in VRAM after the last request (default: `15m`). Ollama does not yield memory to non-Ollama processes, so lower it, or unload from the UI, if other CUDA jobs share the GPU. |
-| `EMBED_MODEL` | Embedding model for passage ranking (default: `nomic-embed-text`) |
-| `SEARCH_AUTHORITY_BOOST` | Ranking bonus for primary sources (default: `0.15`) |
-| `SEARCH_PRIMARY_DOMAINS` | JSON list of hosts treated as primary sources (default: code, package and paper hosts) |
-| `CATALOG_ENABLED` | Auto-describe installed models (default: `true`) |
-| `CATALOG_FETCH_REMOTE` | Fetch the model's public page to ground descriptions (default: `true`) |
-| `DESCRIBER_MODEL` | Model that writes descriptions (default: the loaded one, else the model itself) |
-| `DESCRIPTION_LANGUAGE` | Language of descriptions, e.g. `Brazilian Portuguese` (default: `English`) |
+| Variable | Default | Description |
+|---|---|---|
+| `POSTGRES_PASSWORD` | *(required)* | Database password |
+| `SEARXNG_SECRET` | *(required)* | SearXNG secret key |
+| `APP_PORT` | `8088` | Host port, bound to `127.0.0.1` |
+| `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama endpoint |
+| `TIMEZONE` | `America/Sao_Paulo` | Defines "today" in prompts |
+| `DEFAULT_NUM_CTX` | `8192` | Context window sent to Ollama, capped by each model's limit |
+| `KEEP_ALIVE` | `15m` | Time a model stays in VRAM after the last request |
+| `EMBED_MODEL` | `nomic-embed-text` | Embedding model for passage ranking |
+| `SEARCH_AUTHORITY_BOOST` | `0.15` | Ranking bonus for primary sources |
+| `SEARCH_PRIMARY_DOMAINS` | code, package and paper hosts | JSON list of hosts treated as primary sources |
+| `CATALOG_ENABLED` | `true` | Auto-describe installed models |
+| `CATALOG_FETCH_REMOTE` | `true` | Fetch the model's public page to ground descriptions |
+| `DESCRIBER_MODEL` | loaded model, else the model itself | Model that writes descriptions |
+| `DESCRIPTION_LANGUAGE` | `English` | Language of descriptions, e.g. `Brazilian Portuguese` |
 
----
+> [!NOTE]
+> Ollama does not release VRAM to non-Ollama processes. If other CUDA jobs share the GPU, lower `KEEP_ALIVE` or unload models from the UI.
 
-## 🔐 Privacy
+## Privacy
 
 | Path | What leaves the server |
-|------|------------------------|
+|---|---|
 | Chat, web toggle off | Nothing |
-| Chat, web toggle on | The search queries (rewritten by the model, not the raw prompt) and page requests. Search engines see your public IP. |
-| New model installed | Only the model name, to ollama.com or huggingface.co. Disable with `CATALOG_FETCH_REMOTE=false`. |
+| Chat, web toggle on | Search queries (rewritten by the model, not the raw prompt) and page requests. Search engines see your public IP. |
+| New model installed | The model name only, sent to ollama.com or huggingface.co. Disable with `CATALOG_FETCH_REMOTE=false`. |
 
-There is no telemetry. To also hide your IP from search engines, route the SearXNG container through a VPN or proxy (SearXNG's `outgoing` settings).
+There is no telemetry. To hide your IP from search engines as well, route the SearXNG container through a VPN or proxy using SearXNG's `outgoing` settings.
 
----
-
-## 🌐 API
+## API
 
 | Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/chat` | SSE stream: `meta`, `status`, `sources`, `thinking`, `token`, `stats`, `loop`, `notice`, `done`, `error` |
+|---|---|---|
+| `POST` | `/api/chat` | SSE stream with events `meta`, `status`, `sources`, `thinking`, `token`, `stats`, `loop`, `notice`, `done`, `error` |
 | `GET` | `/api/conversations` | List conversations |
-| `GET` / `PATCH` / `DELETE` | `/api/conversations/{id}` | Read with messages / rename / delete |
+| `GET` / `PATCH` / `DELETE` | `/api/conversations/{id}` | Read with messages, rename, delete |
 | `GET` | `/api/models` | Installed models with metadata and descriptions |
 | `POST` | `/api/models/pull` | Pull a model (SSE progress) |
 | `POST` | `/api/models/{name}/describe` | Regenerate a description |
@@ -179,58 +175,72 @@ There is no telemetry. To also hide your IP from search engines, route the SearX
 | `POST` | `/api/models/unload` | Unload one model (`{"name": ...}`) or all (`{}`) |
 | `GET` | `/api/health` | Ollama and SearXNG reachability |
 
----
+## Design decisions
 
-## 🧠 Design decisions
+### Ollama, not vLLM
 
-**Ollama, not vLLM.** vLLM pre-allocates GPU memory and serves one model per process. It optimizes throughput under many concurrent requests. A single user switching models on one GPU benefits more from Ollama's on-demand load and unload (`keep_alive`).
+vLLM pre-allocates GPU memory and serves one model per process. It optimizes throughput under many concurrent requests. A single user switching models on one GPU benefits more from Ollama's on-demand loading and unloading (`keep_alive`).
 
-**The planner runs on the selected model.** That model is already resident in VRAM, so deciding whether to search costs no model swap. A separate router model would force an unload and reload on every turn on a 16 GB card. The planner uses Ollama structured outputs (JSON schema). If it fails, the app searches the raw message.
+### The planner runs on the selected model
 
-**Fetch and rerank, not snippets.** Search-engine snippets are too short to ground an answer. Pages are downloaded with a size cap and their main text is extracted. Passages are ranked by maximum cosine similarity to any query. Passages below 60% of the best score are dropped, and at most two are kept per page. Without an embedding model, ranking falls back to lexical overlap.
+That model is already resident in VRAM, so deciding whether to search costs no model swap. A separate router model would force an unload and reload on every turn on a 16 GB card. The planner uses Ollama structured outputs (JSON schema). If it fails, the app searches the raw message.
 
-**Relevance is not reliability.** An SEO article titled "Latest version of X" matches the question better than the project's own release page, and may be weeks out of date. Three mechanisms counter that:
+### Fetch and rerank, not snippets
 
-- **Query language.** The planner writes queries in the language most likely to reach primary sources (English for software and science), not necessarily the user's language.
-- **Authority prior.** Primary sources get a multiplicative ranking bonus, `(1 + 0.15) × similarity`, so the bonus only reorders passages of comparable relevance. A source is primary if its host is a code, package or paper host (`github.com`, `pypi.org`, `arxiv.org`, …) or if its registrable name equals a query term (`ollama.com` for "ollama …"; `ollama-guide.net` does not qualify). Up to two primary hits beyond the top 5 are also fetched, since engines often rank them lower.
-- **Dates in context.** Each passage header carries its site, publication date (from page metadata) and a primary-source flag. The model is instructed to prefer the most recent and primary source when results disagree, and to state the disagreement.
+Search-engine snippets are too short to ground an answer. Pages are downloaded with a size cap and their main text is extracted. Each passage is scored by its maximum cosine similarity to any query. Passages below 60 % of the best score are dropped, and at most two are kept per page. Without an embedding model, ranking falls back to lexical overlap.
 
-**Web content is untrusted.** Retrieved text is wrapped in delimiters with an explicit instruction to treat it as data. The app takes no actions, so prompt injection can only affect the answer text.
+### Relevance is not reliability
 
-**`num_ctx` is always explicit.** Ollama's default context is small and truncates silently. The app sends `min(DEFAULT_NUM_CTX, model limit)` and fits the history to that budget:
+An SEO article titled "Latest version of X" can match a question better than the project's own release page, and be weeks out of date. Three mechanisms counter that:
+
+- **Query language.** The planner writes queries in the language most likely to reach primary sources, such as English for software and science.
+- **Authority prior.** Primary sources get a multiplicative bonus, $(1 + 0.15) \times \text{similarity}$. The bonus only reorders passages of comparable relevance. A source is primary if its host is a code, package or paper host (`github.com`, `pypi.org`, `arxiv.org`, …), or if its registrable domain name equals a query term: `ollama.com` qualifies for "ollama …", `ollama-guide.net` does not. Up to two primary hits beyond the top 5 are also fetched, since engines often rank them lower.
+- **Dates in context.** Each passage header carries its site, publication date from page metadata and a primary-source flag. The model is told to prefer the most recent primary source when results disagree, and to state the disagreement.
+
+### Web content is untrusted
+
+Retrieved text is wrapped in delimiters with an explicit instruction to treat it as data. The app takes no actions, so a prompt injection can only affect the answer text.
+
+### `num_ctx` is always explicit
+
+Ollama's default context is small and truncates silently. The app sends `min(DEFAULT_NUM_CTX, model limit)` and fits the history to that budget:
 
 ```
 history budget = num_ctx − response reserve − system prompt − user message − web context
 ```
 
-Messages that no longer fit are merged into a rolling summary (previous summary + evicted messages). Each turn's cost stays bounded. The window always starts on a user turn, because some chat templates reject a history that opens with an assistant message.
+Messages that no longer fit are merged into a rolling summary (previous summary + evicted messages), so each turn's cost stays bounded. The window always starts on a user turn, because some chat templates reject a history that opens with an assistant message.
 
-**Runaway generation is stopped by the server.** Small models sometimes fall into a repetition loop and copy the last block they wrote until the context is full. Ollama's default repetition penalty looks only at the last 64 tokens, so a loop with a longer period is not penalized. Two guards, both independent of the model:
+### Runaway generation is stopped by the server
+
+Small models sometimes fall into a repetition loop and copy their last block until the context is full. Ollama's repetition penalty only looks at the last 64 tokens by default, so a loop with a longer period goes unpenalized. Two model-independent guards apply:
 
 - **Output cap.** `num_predict` is set to the room left in the context window. Without it, Ollama keeps generating by discarding old tokens, and a looping model never stops.
-- **Loop detector.** Every 48 characters, the tail of the answer is checked for a block that repeats at equal spacing at least four times (160-character probe). Digits are masked for long blocks, because loops often increment a counter (`[85]`, `[86]`, ...). On a hit, the server closes the stream, which makes Ollama stop, and keeps exactly one copy of the repeated block, so the stored answer does not poison later turns. The check needs 12 distinct characters in the probe, so separators and tables of bare numbers do not match. Three copies of a paragraph, as in "repeat this three times", do not match either.
+- **Loop detector.** Every 48 characters, the tail of the answer is checked for a block repeated at equal spacing at least four times, using a 160-character probe. Digits are masked for long blocks, because loops often increment a counter (`[85]`, `[86]`, …). On a match, the server closes the stream, which stops Ollama, and keeps exactly one copy of the block, so the stored answer does not poison later turns. The probe must contain at least 12 distinct characters, so separators and tables of bare numbers do not match. Three copies of a paragraph, as in "repeat this three times", do not match either.
 
-**History lives in relational tables, not in LangGraph's checkpointer.** The checkpointer stores opaque per-step graph state. The UI must list, rename and delete conversations, which is domain data. LangGraph is used for what it adds: typed state, conditional edges and a streaming channel for node events.
+### History in relational tables, not the LangGraph checkpointer
 
-**Model descriptions are grounded.** Ollama has no API for "what is this model good at". An LLM describing a model from its own weights would hallucinate, because most models are newer than its training data. So `/api/show` provides objective metadata, the model's public page provides the author's claims, and a local LLM only condenses the two.
+The checkpointer stores opaque per-step graph state. The UI must list, rename and delete conversations, which is domain data. LangGraph is used for what it adds: typed state, conditional edges and a streaming channel for node events.
 
-**Model detection is level-triggered.** Ollama has no webhooks. A reconciliation loop diffs `/api/tags` against the catalog every 60 s. Models pulled from the CLI are covered too, not only those pulled through the UI.
+### Grounded model descriptions
 
----
+Ollama has no API for "what is this model good at". An LLM describing a model from its own weights would hallucinate, because most models are newer than its training data. So `/api/show` provides objective metadata, the model's public page provides the author's claims, and a local LLM only condenses the two.
 
-## ⚠️ Limitations
+### Level-triggered model detection
 
-- **Single user.** There is no app-level authentication. Access control is the tailnet. Do not publish the port to the LAN or the internet.
-- **Local model quality.** Models that fit in 16 GB do well on everyday tasks but fall behind commercial models on long reasoning.
-- **Search depends on public engines.** SearXNG aggregates several engines, but any of them can rate-limit or block it.
-- **Source authority is a heuristic.** Name matching misses official sites on unrelated domains, and publication dates are only as good as the page metadata.
-- **Token counts are estimated.** The budget uses ~3 characters per token, which errs on the safe side but wastes some context.
+Ollama has no webhooks. A reconciliation loop diffs `/api/tags` against the catalog every 60 seconds. This also covers models pulled from the CLI, not only those pulled through the UI.
+
+## Limitations
+
+- **Single user.** There is no app-level authentication; the tailnet is the access control. Do not publish the port to the LAN or the internet.
+- **Local model quality.** Models that fit in 16 GB do well on everyday tasks but trail commercial models on long reasoning.
+- **Search depends on public engines.** Any of the engines SearXNG aggregates can rate-limit or block it.
+- **Source authority is a heuristic.** Name matching misses official sites on unrelated domains, and dates are only as good as page metadata.
+- **Estimated token counts.** The budget assumes ~3 characters per token. This errs on the safe side but wastes some context.
 - **No schema migrations.** Tables are created with `create_all`. Add Alembic before changing the models.
-- **Text only.** No file uploads or image input yet, even for vision-capable models.
+- **Text only.** No file uploads or image input yet, even for vision models.
 
----
-
-## 📁 Project structure
+## Project structure
 
 ```
 private-llm-chat/
@@ -240,12 +250,12 @@ private-llm-chat/
 │   │   ├── graph.py           # LangGraph pipeline: plan → research → generate
 │   │   ├── search.py          # SearXNG, page fetch, extraction, chunking, ranking
 │   │   ├── memory.py          # Token budget, sliding window, rolling summary
-│   │   ├── loopguard.py       # Repetition-loop detection for streamed output
+│   │   ├── loopguard.py       # Repetition-loop detection on streamed output
 │   │   ├── catalog.py         # Model description reconciliation loop
 │   │   ├── ollama_client.py   # Async Ollama API client
-│   │   ├── prompts.py         # All prompt templates
+│   │   ├── prompts.py         # Prompt templates
 │   │   ├── db.py              # SQLAlchemy models
-│   │   └── config.py          # Settings from environment
+│   │   └── config.py          # Settings from the environment
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/
@@ -262,11 +272,9 @@ private-llm-chat/
 └── README.md
 ```
 
----
+## Development
 
-## 🛠️ Development
-
-Backend (SQLite works for local runs):
+Backend, with SQLite for local runs:
 
 ```bash
 cd backend
@@ -278,7 +286,7 @@ SEARXNG_URL=http://localhost:8081 \
 uvicorn app.main:app --reload --port 8080
 ```
 
-Frontend (proxies `/api` to `:8080`):
+Frontend, which proxies `/api` to port 8080:
 
 ```bash
 cd frontend
@@ -286,9 +294,7 @@ npm install
 npm run dev
 ```
 
----
-
-## 🛣️ Roadmap
+## Roadmap
 
 - [x] Streaming chat with persistent history
 - [x] Model picker with grounded, auto-generated descriptions
@@ -300,22 +306,14 @@ npm run dev
 - [ ] Exact token counting with the model's tokenizer
 - [ ] Alembic migrations
 
----
+## License
 
-## 📜 License
+Released under the [MIT License](LICENSE).
 
-MIT — see `LICENSE` file.
+## Author
 
-## 👤 Author
+**Cassiano Ribeiro Carneiro** · [@cassianorcarneiro](https://github.com/cassianorcarneiro)
 
-**Cassiano Ribeiro Carneiro** — [@cassianorcarneiro](https://github.com/cassianorcarneiro)
+## AI assistance
 
----
-
-### 🤖 AI Assistance Disclosure
-
-This project was designed and implemented in collaboration with [Claude](https://www.anthropic.com/claude) by Anthropic. The author defined the requirements, made the architecture and technology decisions, and reviewed the result. The project is governed by its license.
-
----
-
-> *Built for anyone who wants a capable AI assistant without sending their conversations to someone else's server.*
+This project was designed and implemented with Claude (Anthropic). The author defined the requirements, made the architecture and technology decisions, and reviewed the result.
