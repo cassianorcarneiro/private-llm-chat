@@ -195,6 +195,9 @@ export default function App() {
               notice: "Generation stopped: the model got stuck repeating itself. The repeated text was removed.",
             }));
             break;
+          case "evidence":
+            updateLast((m) => ({ ...m, evidence: d.problems ?? [] }));
+            break;
           case "notice":
             updateLast((m) => ({ ...m, notice: d.text }));
             break;

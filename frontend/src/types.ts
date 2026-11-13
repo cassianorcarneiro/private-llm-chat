@@ -11,6 +11,7 @@ export interface Source {
   title: string;
   date?: string | null;
   primary?: boolean;
+  tier?: "trusted" | "neutral" | "low";
 }
 
 export interface ChatMessage {
@@ -24,6 +25,8 @@ export interface ChatMessage {
   status?: string;
   /** Non-error warning shown under the answer, e.g. "stopped: repetition loop". */
   notice?: string;
+  /** Evidence-check problems (weak or untrusted sources), shown under the sources. */
+  evidence?: string[];
   streaming?: boolean;
   error?: string;
   stats?: { output_tokens?: number; eval_duration_ns?: number };

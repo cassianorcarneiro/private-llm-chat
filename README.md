@@ -32,16 +32,19 @@ flowchart LR
     M["Message"] --> P{"plan"}
     P -->|"web on, search needed"| R["research"]
     P -->|"web off, or no search needed"| G["generate"]
-    R --> G
+    R --> V{"evaluate"}
+    V -->|"weak evidence, round left"| R
+    V -->|"ok, or out of rounds"| G
     G --> S["SSE stream"]
 ```
 
 1. **Pick a model.** The selector lists every installed chat model, each with a short description.
 2. **Plan.** With the web toggle on, the selected model decides whether a search is needed. It writes 1 to 3 queries as structured JSON.
 3. **Research.** Queries go to SearXNG. The top pages are downloaded and their main text is extracted.
-4. **Rank.** Pages are split into passages. A local embedding model ranks them against the queries. Only the best passages enter the prompt.
-5. **Fit the context.** Recent messages are sent verbatim. Older ones are folded into a rolling summary.
-6. **Generate.** The answer streams token by token, with numbered citations when the web was used.
+4. **Rank.** Pages are split into passages. A local embedding model ranks them against the queries, weighted by source tier. Only the best passages enter the prompt.
+5. **Check the evidence.** The model judges whether the passages answer the question and whether any source is trusted. If not, it refines the queries and searches once more.
+6. **Fit the context.** Recent messages are sent verbatim. Older ones are folded into a rolling summary.
+7. **Generate.** The answer streams token by token, with numbered citations when the web was used.
 
 With the web toggle off, no part of the conversation leaves the server.
 
@@ -140,7 +143,13 @@ All settings are environment variables in `.env`. See [`.env.example`](.env.exam
 | `DEFAULT_NUM_CTX` | `8192` | Context window sent to Ollama, capped by each model's limit |
 | `KEEP_ALIVE` | `15m` | Time a model stays in VRAM after the last request |
 | `EMBED_MODEL` | `nomic-embed-text` | Embedding model for passage ranking |
-| `SEARCH_AUTHORITY_BOOST` | `0.15` | Ranking bonus for primary sources |
+| `SEARCH_AUTHORITY_BOOST` | `0.15` | Ranking bonus for trusted sources |
+| `SEARCH_VERIFY` | `true` | Let the model judge whether the passages answer the question |
+| `SEARCH_MAX_ROUNDS` | `2` | Total search rounds, first included. `1` disables the second round |
+| `SEARCH_REQUIRE_TRUSTED` | `true` | Also search again when no trusted source was found |
+| `SEARCH_TRUSTED_DOMAINS` | reference and scientific hosts | JSON list of extra trusted hosts, besides primary sources and `.gov`, `.edu`, `.int` suffixes |
+| `SEARCH_BLOCKED_DOMAINS` | *(empty)* | JSON list of hosts ranked down by `SEARCH_LOW_PENALTY` |
+| `SEARCH_LOW_PENALTY` | `0.4` | Ranking penalty for blocked hosts, $(1 - \text{penalty}) \times \text{similarity}$ |
 | `SEARCH_PRIMARY_DOMAINS` | code, package and paper hosts | JSON list of hosts treated as primary sources |
 | `CATALOG_ENABLED` | `true` | Auto-describe installed models |
 | `CATALOG_FETCH_REMOTE` | `true` | Fetch the model's public page to ground descriptions |
@@ -164,7 +173,7 @@ There is no telemetry. To hide your IP from search engines as well, route the Se
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/chat` | SSE stream with events `meta`, `status`, `sources`, `thinking`, `token`, `stats`, `loop`, `notice`, `done`, `error` |
+| `POST` | `/api/chat` | SSE stream with events `meta`, `status`, `sources`, `thinking`, `token`, `evidence`, `stats`, `loop`, `notice`, `done`, `error` |
 | `GET` | `/api/conversations` | List conversations |
 | `GET` / `PATCH` / `DELETE` | `/api/conversations/{id}` | Read with messages, rename, delete |
 | `GET` | `/api/models` | Installed models with metadata and descriptions |
@@ -196,6 +205,17 @@ An SEO article titled "Latest version of X" can match a question better than the
 - **Query language.** The planner writes queries in the language most likely to reach primary sources, such as English for software and science.
 - **Authority prior.** Primary sources get a multiplicative bonus, $(1 + 0.15) \times \text{similarity}$. The bonus only reorders passages of comparable relevance. A source is primary if its host is a code, package or paper host (`github.com`, `pypi.org`, `arxiv.org`, …), or if its registrable domain name equals a query term: `ollama.com` qualifies for "ollama …", `ollama-guide.net` does not. Up to two primary hits beyond the top 5 are also fetched, since engines often rank them lower.
 - **Dates in context.** Each passage header carries its site, publication date from page metadata and a primary-source flag. The model is told to prefer the most recent primary source when results disagree, and to state the disagreement.
+
+### The evidence is checked before the model answers
+
+Ranking cannot tell whether the retrieved passages answer the question. An `evaluate` node therefore sits between research and generation:
+
+- **Source tiers.** Each source is `trusted` (primary, listed in `SEARCH_TRUSTED_DOMAINS`, or an institutional suffix), `low` (listed in `SEARCH_BLOCKED_DOMAINS`) or `neutral`. Trusted sources get the ranking bonus. Low sources get a penalty and are not downloaded. One slot among the selected passages is reserved for the best trusted passage that survived the relevance cut.
+- **Coverage judge.** The chat model reads the selected passages (350 characters each) and returns JSON: sufficient or not, what is missing, and up to two new queries. It judges coverage, not truth. If the judge fails or returns invalid JSON, the evidence counts as sufficient, so a broken judge never blocks an answer.
+- **Bounded second round.** The graph loops back to research when the judge says insufficient, or when no trusted source was found. New passages join the pool from round 1, and everything is re-ranked against all queries tried. `SEARCH_MAX_ROUNDS` bounds the loop. The idea follows corrective retrieval (CRAG): evaluate the retrieval, then repair it.
+- **Honest output.** If the evidence is still weak after the last round, the system prompt tells the model to say so, and the UI shows an amber notice under the sources.
+
+The cost is one extra model call per search turn, plus a second search and judge call when the first round is weak.
 
 ### Web content is untrusted
 
@@ -235,7 +255,8 @@ Ollama has no webhooks. A reconciliation loop diffs `/api/tags` against the cata
 - **Single user.** There is no app-level authentication; the tailnet is the access control. Do not publish the port to the LAN or the internet.
 - **Local model quality.** Models that fit in 16 GB do well on everyday tasks but trail commercial models on long reasoning.
 - **Search depends on public engines.** Any of the engines SearXNG aggregates can rate-limit or block it.
-- **Source authority is a heuristic.** Name matching misses official sites on unrelated domains, and dates are only as good as page metadata.
+- **Source authority is a heuristic.** Name matching misses official sites on unrelated domains, and dates are only as good as page metadata. Trust tiers are priors from the host name, not a judgment of the content. Edit the lists to your own view.
+- **The judge is as good as the selected model.** A 4B model is a weak judge. "Sufficient" means the passages contain the needed facts, not that the facts are true. Nothing checks the final answer against the sources after generation.
 - **Estimated token counts.** The budget assumes ~3 characters per token. This errs on the safe side but wastes some context.
 - **No schema migrations.** Tables are created with `create_all`. Add Alembic before changing the models.
 - **Text only.** No file uploads or image input yet, even for vision models.
@@ -247,8 +268,8 @@ private-llm-chat/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py            # FastAPI routes, SSE streaming, static files
-│   │   ├── graph.py           # LangGraph pipeline: plan → research → generate
-│   │   ├── search.py          # SearXNG, page fetch, extraction, chunking, ranking
+│   │   ├── graph.py           # LangGraph pipeline: plan → research ⇄ evaluate → generate
+│   │   ├── search.py          # SearXNG, page fetch, extraction, chunking, ranking, source tiers
 │   │   ├── memory.py          # Token budget, sliding window, rolling summary
 │   │   ├── loopguard.py       # Repetition-loop detection on streamed output
 │   │   ├── catalog.py         # Model description reconciliation loop

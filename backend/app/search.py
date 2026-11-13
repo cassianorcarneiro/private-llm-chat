@@ -13,6 +13,13 @@ release page. Two signals counter that:
 - A small authority prior in the ranking, for primary sources.
 - Publication dates in each passage header, so the model can resolve conflicts
   between sources in favor of the most recent one.
+
+Source tiers go further. Every source is classified as trusted, neutral or low.
+Trusted sources get the ranking bonus and one reserved slot in the selected
+passages. Low sources are penalized. The tier is a prior from the host name,
+not a verdict on the content. The pipeline is split into gather (search, fetch,
+chunk), select (rank, pick) and build_context so the graph can pool candidates
+across search rounds and judge them in between (see graph.py).
 """
 
 import asyncio
@@ -35,6 +42,8 @@ _WORD = re.compile(r"\w{3,}", re.UNICODE)
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 # Second-level labels of two-part public suffixes (com.br, co.uk, ...).
 _SLD = {"com", "co", "org", "net", "gov", "edu", "ac", "or", "ne"}
+# Institutional suffixes: governments, universities, intergovernmental bodies.
+_TRUSTED_SUFFIXES = (".gov", ".edu", ".int", ".gov.br", ".edu.br", ".jus.br", ".leg.br", ".gov.uk", ".ac.uk")
 
 
 # --- Source metadata -------------------------------------------------------------
@@ -70,6 +79,30 @@ def is_primary(url: str, queries: list[str]) -> bool:
     name = site_name(host)
     terms = {w.lower() for q in queries for w in _WORD.findall(q)}
     return len(name) >= 4 and name in terms
+
+
+def _host_matches(host: str, domains: list[str]) -> bool:
+    return any(host == d or host.endswith("." + d) for d in domains)
+
+
+def classify(url: str, queries: list[str]) -> tuple[str, bool]:
+    """Return (tier, primary). Tier is "trusted", "neutral" or "low".
+
+    Primary sources are always trusted. Besides them, trusted are hosts in
+    settings.search_trusted_domains and institutional suffixes (.gov, .edu, ...).
+    Low are hosts in settings.search_blocked_domains; the list is empty by default.
+    """
+    host = host_of(url)
+    primary = is_primary(url, queries)
+    if _host_matches(host, settings.search_blocked_domains):
+        return "low", False
+    if (
+        primary
+        or _host_matches(host, settings.search_trusted_domains)
+        or any(host.endswith(sfx) for sfx in _TRUSTED_SUFFIXES)
+    ):
+        return "trusted", primary
+    return "neutral", False
 
 
 def normalize_date(value) -> str | None:
@@ -180,9 +213,9 @@ def _lexical(query: str, text: str) -> float:
 async def rank_chunks(queries: list[str], chunks: list[dict]) -> tuple[list[dict], str]:
     """Rank chunks by max similarity to any query, times an authority prior.
 
-    The prior is multiplicative, (1 + boost) for primary sources, so it only
-    reorders passages of comparable relevance. An irrelevant passage from a
-    primary site still ranks low.
+    The prior is multiplicative: (1 + boost) for trusted sources, (1 - penalty)
+    for low ones. It only reorders passages of comparable relevance. An
+    irrelevant passage from a trusted site still ranks low.
 
     Chunks scoring below a fraction of the best score are dropped. A relative
     cut is used because absolute cosine ranges differ between embedding models.
@@ -201,8 +234,12 @@ async def rank_chunks(queries: list[str], chunks: list[dict]) -> tuple[list[dict
         log.warning("embedding rank failed (%s); using lexical ranking", exc)
         scores = [max(_lexical(q, c["text"]) for q in queries) for c in chunks]
         method = "lexical"
-    boost = 1.0 + settings.search_authority_boost
-    scores = [s * boost if c["primary"] else s for s, c in zip(scores, chunks)]
+    weight = {
+        "trusted": 1.0 + settings.search_authority_boost,
+        "neutral": 1.0,
+        "low": 1.0 - settings.search_low_penalty,
+    }
+    scores = [s * weight[c["tier"]] for s, c in zip(scores, chunks)]
     order = sorted(range(len(chunks)), key=lambda i: scores[i], reverse=True)
     best = scores[order[0]]
     cutoff = best * settings.search_min_relative_score if best > 0 else 0.0
@@ -217,11 +254,17 @@ def _header(n: int, c: dict) -> str:
     parts.append(f"published: {c['date']}" if c["date"] else "published: unknown")
     if c["primary"]:
         parts.append("primary source")
+    elif c["tier"] == "trusted":
+        parts.append("trusted source")
     return " | ".join(parts) + f"\nURL: {c['url']}"
 
 
-async def web_research(queries: list[str], max_chars: int) -> tuple[str, list[dict], str]:
-    """Return (context block, numbered sources, ranking method)."""
+async def gather(queries: list[str], skip_urls: set[str] | None = None) -> list[dict]:
+    """Search, fetch and chunk. Return candidate passages (unranked).
+
+    skip_urls are pages already gathered in an earlier round.
+    """
+    skip_urls = skip_urls or set()
     raw = await asyncio.gather(
         *(searxng_search(q, settings.search_max_results) for q in queries), return_exceptions=True
     )
@@ -230,23 +273,25 @@ async def web_research(queries: list[str], max_chars: int) -> tuple[str, list[di
         raise RuntimeError(f"SearXNG unavailable: {raw[0]}")
 
     # Round-robin merge so every query contributes its best hits.
-    hits, seen = [], set()
+    hits, seen = [], set(skip_urls)
     for i in range(max(len(lst) for lst in lists)):
         for lst in lists:
             if i < len(lst) and lst[i]["url"] not in seen:
                 seen.add(lst[i]["url"])
                 hits.append(lst[i])
     if not hits:
-        return "", [], "none"
+        return []
 
     for h in hits:
         h["host"] = host_of(h["url"])
-        h["primary"] = is_primary(h["url"], queries)
+        h["tier"], h["primary"] = classify(h["url"], queries)
+    # Low-tier pages are not worth a fetch; their snippets still compete.
 
-    # Fetch the top hits, plus up to two primary sources further down the list.
+    # Fetch the top hits, plus up to two trusted sources further down the list.
     # Engines often rank SEO pages above a project's own release page.
-    to_fetch = hits[: settings.search_fetch_pages]
-    extra = [h for h in hits[settings.search_fetch_pages:] if h["primary"]][:2]
+    fetchable = [h for h in hits if h["tier"] != "low"]
+    to_fetch = fetchable[: settings.search_fetch_pages]
+    extra = [h for h in fetchable[settings.search_fetch_pages:] if h["tier"] == "trusted"][:2]
     to_fetch += extra
     async with httpx.AsyncClient(
         timeout=settings.fetch_timeout_s, headers={"User-Agent": USER_AGENT}
@@ -259,6 +304,7 @@ async def web_research(queries: list[str], max_chars: int) -> tuple[str, list[di
             "title": h["title"],
             "host": h["host"],
             "primary": h["primary"],
+            "tier": h["tier"],
             "date": date or h["date"],
         }
 
@@ -274,11 +320,20 @@ async def web_research(queries: list[str], max_chars: int) -> tuple[str, list[di
     for hit in hits:
         if hit["url"] not in fetched and hit["snippet"]:
             chunks.append({**meta(hit), "text": hit["snippet"]})
-    chunks = chunks[:90]
+    return chunks[:90]
 
+
+async def select(
+    queries: list[str], chunks: list[dict], max_chars: int
+) -> tuple[list[dict], str]:
+    """Rank the pool and pick the passages that go into the prompt.
+
+    At most 2 passages per page, under a character budget. If no trusted passage
+    was picked but one survived the relevance cut, it replaces the weakest pick.
+    Without this reserved slot, a trusted source that is only slightly less
+    similar than several SEO pages would never reach the model.
+    """
     ranked, method = await rank_chunks(queries, chunks)
-
-    # Select top chunks under a character budget, at most 2 per page for diversity.
     selected, per_url, total = [], Counter(), 0
     for c in ranked:
         if per_url[c["url"]] >= 2 or total + len(c["text"]) > max_chars:
@@ -288,7 +343,15 @@ async def web_research(queries: list[str], max_chars: int) -> tuple[str, list[di
         total += len(c["text"])
         if len(selected) >= settings.search_top_chunks:
             break
+    if selected and not any(c["tier"] == "trusted" for c in selected):
+        best = next((c for c in ranked if c["tier"] == "trusted" and len(c["text"]) <= max_chars), None)
+        if best is not None:
+            selected[-1] = best
+    return selected, method
 
+
+def build_context(selected: list[dict]) -> tuple[str, list[dict]]:
+    """Number the sources by first appearance and render the context block."""
     index: dict[str, int] = {}
     sources: list[dict] = []
     blocks: list[str] = []
@@ -302,7 +365,22 @@ async def web_research(queries: list[str], max_chars: int) -> tuple[str, list[di
                     "title": c["title"] or c["url"],
                     "date": c["date"],
                     "primary": c["primary"],
+                    "tier": c["tier"],
                 }
             )
         blocks.append(_header(index[c["url"]], c) + "\n" + c["text"])
-    return "\n\n---\n\n".join(blocks), sources, method
+    return "\n\n---\n\n".join(blocks), sources
+
+
+def merge_pool(pool: list[dict], new: list[dict]) -> list[dict]:
+    """Add new passages to the pool, dropping exact duplicates."""
+    seen = {(c["url"], c["text"]) for c in pool}
+    return pool + [c for c in new if (c["url"], c["text"]) not in seen]
+
+
+async def web_research(queries: list[str], max_chars: int) -> tuple[str, list[dict], str]:
+    """Single-round convenience wrapper: (context, sources, ranking method)."""
+    chunks = await gather(queries)
+    selected, method = await select(queries, chunks, max_chars)
+    context, sources = build_context(selected)
+    return context, sources, method

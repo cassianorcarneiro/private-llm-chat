@@ -1,7 +1,11 @@
 """Answer pipeline as a LangGraph state machine.
 
-    START -> plan --(queries?)--> research -> generate -> END
-                  \\-------------(none)------^
+    START -> plan --(queries?)--> research -> evaluate --(weak, rounds left)--> research
+                  \\-------------(none)---------------\\--(ok / out of rounds)--> generate -> END
+
+The evaluate node checks the retrieved passages (coverage by an LLM judge,
+trust by source tier). When they are weak it sends refined queries back to
+research, up to settings.search_max_rounds rounds in total.
 
 LangGraph is used for what it adds over plain code: typed shared state,
 conditional edges, and a streaming channel (`get_stream_writer`) that lets every
@@ -25,7 +29,7 @@ from .config import settings
 from .loopguard import find_loop
 from .memory import est_tokens
 from .ollama_client import ollama, think_off
-from .search import web_research
+from .search import build_context, gather, merge_pool, select
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +48,15 @@ class ChatState(TypedDict, total=False):
     queries: list[str]
     web_context: str
     sources: list[dict]
+    # Evidence loop
+    rounds: int
+    tried: list[str]
+    pool: list[dict]
+    selected: list[dict]
+    retry: bool
+    failed: bool
+    evidence: dict
+
 
 
 async def plan(state: ChatState) -> dict:
@@ -89,21 +102,133 @@ def after_plan(state: ChatState) -> str:
 
 async def research(state: ChatState) -> dict:
     write = get_stream_writer()
-    write({"type": "status", "text": "Searching: " + " · ".join(state["queries"])})
+    rnd = state.get("rounds", 0) + 1
+    queries = state["queries"]
+    prefix = "Searching again" if rnd > 1 else "Searching"
+    write({"type": "status", "text": f"{prefix}: " + " · ".join(queries)})
+    pool = state.get("pool", [])
+    tried = state.get("tried", []) + [q for q in queries if q not in state.get("tried", [])]
     try:
-        context, sources, method = await web_research(
-            state["queries"], settings.web_context_tokens * 3
-        )
+        new = await gather(queries, skip_urls={c["url"] for c in pool})
+        pool = merge_pool(pool, new)
+        # Rank against every query tried so far, so round 2 refines round 1.
+        selected, method = await select(tried, pool, settings.web_context_tokens * 3)
     except Exception as exc:
         log.warning("web research failed: %s", exc)
         write({"type": "status", "text": f"Web search failed: {exc}"})
-        return {"web_context": "", "sources": []}
+        if rnd > 1:  # keep what round 1 found
+            return {"rounds": rnd, "failed": True}
+        return {"web_context": "", "sources": [], "selected": [], "rounds": rnd, "failed": True}
+    context, sources = build_context(selected)
     write({"type": "sources", "sources": sources})
     if sources:
         write({"type": "status", "text": f"Reading {len(sources)} sources ({method} ranking)…"})
     else:
         write({"type": "status", "text": "No usable web results."})
-    return {"web_context": context, "sources": sources}
+    return {
+        "web_context": context,
+        "sources": sources,
+        "selected": selected,
+        "pool": pool,
+        "tried": tried,
+        "rounds": rnd,
+        "failed": False,
+    }
+
+
+async def judge(state: ChatState) -> dict | None:
+    """Ask the chat model whether the passages cover the question.
+
+    Returns None on any failure. The caller then treats the evidence as
+    sufficient, i.e. the pipeline behaves as it did before this check existed.
+    A broken judge must not block answers.
+    """
+    passages = "\n\n".join(
+        f"[{i}] {c['host']} ({c['tier']}, {c['date'] or 'no date'}): {c['text'][:350]}"
+        for i, c in enumerate(state.get("selected", []), 1)
+    )
+    try:
+        raw = await ollama.chat(
+            state["model"],
+            [
+                {"role": "system", "content": prompts.EVALUATOR_SYSTEM.format(today=prompts.today_str())},
+                {
+                    "role": "user",
+                    "content": prompts.EVALUATOR_USER.format(
+                        question=state["user_input"],
+                        tried="\n".join(f"- {q}" for q in state.get("tried", [])),
+                        passages=passages or "(none)",
+                    ),
+                },
+            ],
+            options={"temperature": 0, "num_ctx": state["num_ctx"]},
+            fmt=prompts.EVAL_SCHEMA,
+            think=think_off(state.get("capabilities", [])),
+        )
+        data = json.loads(raw)
+        return {
+            "sufficient": bool(data.get("sufficient")),
+            "missing": str(data.get("missing", ""))[:300],
+            "queries": [q.strip() for q in data.get("queries", []) if isinstance(q, str) and q.strip()],
+        }
+    except Exception as exc:
+        log.warning("evidence judge failed (%s); assuming sufficient", exc)
+        return None
+
+
+async def evaluate(state: ChatState) -> dict:
+    """Judge the retrieved evidence; decide between another round and generation."""
+    write = get_stream_writer()
+    sources = state.get("sources", [])
+    selected = state.get("selected", [])
+    trusted = any(c["tier"] == "trusted" for c in selected)
+
+    verdict = None
+    if settings.search_verify and selected:
+        write({"type": "status", "text": "Checking whether the sources answer the question…"})
+        verdict = await judge(state)
+    sufficient = verdict["sufficient"] if verdict else bool(selected) or not settings.search_verify
+    trust_gap = settings.search_require_trusted and not trusted
+    weak = not sufficient or trust_gap or (not selected and bool(state.get("queries")))
+
+    rnd = state.get("rounds", 1)
+    if weak and rnd < settings.search_max_rounds:
+        tried = state.get("tried", [])
+        fresh = [q for q in (verdict or {}).get("queries", []) if q not in tried][:2]
+        if not fresh and trust_gap and tried:
+            fresh = [f"{tried[0]} official site documentation"]
+        if not fresh and not selected:
+            fresh = [q for q in [state["user_input"][:200]] if q not in tried]
+        if fresh:
+            return {"queries": fresh, "retry": True}
+
+    problems = []
+    if not sufficient:
+        missing = (verdict or {}).get("missing", "")
+        problems.append(
+            "The retrieved passages may not fully answer the question"
+            + (f" (missing: {missing})." if missing else ".")
+        )
+    if trust_gap and selected:
+        problems.append("None of the sources is a primary or otherwise trusted source.")
+    evidence = {
+        "sufficient": sufficient,
+        "trusted": trusted,
+        "rounds": rnd,
+        "missing": (verdict or {}).get("missing", ""),
+        "problems": problems,
+    }
+    if sources:
+        write({"type": "evidence", **evidence})
+    return {"retry": False, "evidence": evidence}
+
+
+def after_research(state: ChatState) -> str:
+    return "generate" if state.get("failed") else "evaluate"
+
+
+def after_evaluate(state: ChatState) -> str:
+    return "research" if state.get("retry") else "generate"
 
 
 async def generate(state: ChatState) -> dict:
@@ -111,6 +236,9 @@ async def generate(state: ChatState) -> dict:
     system = state["system"]
     if state.get("web_context"):
         system += "\n\n" + prompts.WEB_CONTEXT.format(context=state["web_context"])
+        problems = (state.get("evidence") or {}).get("problems", [])
+        if problems:
+            system += "\n\n" + prompts.EVIDENCE_NOTE.format(problem=" ".join(problems))
     messages = [
         {"role": "system", "content": system},
         *state.get("history", []),
@@ -172,10 +300,16 @@ def build_graph():
     g = StateGraph(ChatState)
     g.add_node("plan", plan)
     g.add_node("research", research)
+    g.add_node("evaluate", evaluate)
     g.add_node("generate", generate)
     g.add_edge(START, "plan")
     g.add_conditional_edges("plan", after_plan, {"research": "research", "generate": "generate"})
-    g.add_edge("research", "generate")
+    g.add_conditional_edges(
+        "research", after_research, {"evaluate": "evaluate", "generate": "generate"}
+    )
+    g.add_conditional_edges(
+        "evaluate", after_evaluate, {"research": "research", "generate": "generate"}
+    )
     g.add_edge("generate", END)
     return g.compile()
 

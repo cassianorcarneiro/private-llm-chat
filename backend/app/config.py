@@ -43,6 +43,33 @@ class Settings(BaseSettings):
         "huggingface.co",
         "arxiv.org",
     ]
+    # Hosts treated as trusted besides primary sources and institutional suffixes
+    # (.gov, .edu, .int, ...). A subjective prior: edit it to your own judgment.
+    search_trusted_domains: list[str] = [
+        "wikipedia.org",
+        "nih.gov",
+        "who.int",
+        "nature.com",
+        "science.org",
+        "ieee.org",
+        "acm.org",
+        "python.org",
+        "mozilla.org",
+    ]
+    # Hosts ranked down (content farms, scrapers). Empty by default.
+    search_blocked_domains: list[str] = []
+    # Ranking multiplier for blocked hosts: (1 - penalty) * similarity.
+    search_low_penalty: float = 0.4
+
+    # --- Evidence check (judge + second search round) -------------------------
+    # After retrieval, the chat model judges whether the passages answer the
+    # question. If not, one more search round runs with refined queries.
+    search_verify: bool = True
+    # Total search rounds, first included. 1 disables the second round.
+    search_max_rounds: int = 2
+    # Also trigger another round when no trusted source was found.
+    search_require_trusted: bool = True
+
     fetch_timeout_s: float = 8.0
     fetch_max_bytes: int = 2_000_000
 

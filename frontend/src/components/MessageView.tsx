@@ -78,10 +78,18 @@ function MessageView({ m }: { m: ChatMessage }) {
               </a>
               <span className="host">{safeHost(s.url)}</span>
               {s.date && <span className="host">{s.date}</span>}
-              {s.primary && <span className="primary-tag">primary</span>}
+              {s.primary ? (
+                <span className="primary-tag">primary</span>
+              ) : (
+                s.tier === "trusted" && <span className="primary-tag">trusted</span>
+              )}
             </li>
           ))}
         </ol>
+      )}
+
+      {m.evidence && m.evidence.length > 0 && (
+        <div className="notice-box">{m.evidence.join(" ")}</div>
       )}
 
       {!m.streaming && m.content && (
